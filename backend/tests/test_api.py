@@ -175,3 +175,74 @@ def test_create_task_with_duplicate_node_ids_is_deduplicated() -> None:
 
     assert response.status_code == 200
     assert len(response.json()["task_nodes"]) == 1
+
+
+def test_approve_taskspec_after_cancel_returns_409() -> None:
+    with SessionLocal() as session:
+        node = Node(
+            name="api-node-5",
+            host_alias="api-node-5",
+            hostname="127.0.0.1",
+            port=22,
+            username="root",
+            ssh_config_source="test",
+            tags=[],
+            capability_warnings=[],
+            is_enabled=True,
+        )
+        session.add(node)
+        session.commit()
+        node_id = node.id
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/tasks",
+            json={
+                "title": "API cancel then approve taskspec",
+                "mode": "agent_command",
+                "user_input": "Inspect node",
+                "node_ids": [node_id],
+                "max_rounds_per_node": 2,
+            },
+        )
+        task_id = create_response.json()["id"]
+        cancel_response = client.post(f"/api/tasks/{task_id}/cancel")
+        approve_response = client.post(f"/api/tasks/{task_id}/taskspec/approve", json={})
+
+    assert cancel_response.status_code == 200
+    assert approve_response.status_code == 409
+
+
+def test_resume_non_paused_task_returns_409() -> None:
+    with SessionLocal() as session:
+        node = Node(
+            name="api-node-6",
+            host_alias="api-node-6",
+            hostname="127.0.0.1",
+            port=22,
+            username="root",
+            ssh_config_source="test",
+            tags=[],
+            capability_warnings=[],
+            is_enabled=True,
+        )
+        session.add(node)
+        session.commit()
+        node_id = node.id
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/tasks",
+            json={
+                "title": "API resume cancelled task",
+                "mode": "agent_command",
+                "user_input": "Inspect node",
+                "node_ids": [node_id],
+                "max_rounds_per_node": 2,
+            },
+        )
+        task_id = create_response.json()["id"]
+        client.post(f"/api/tasks/{task_id}/cancel")
+        resume_response = client.post(f"/api/tasks/{task_id}/resume")
+
+    assert resume_response.status_code == 409

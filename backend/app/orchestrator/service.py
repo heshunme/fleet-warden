@@ -155,6 +155,10 @@ class OrchestratorService:
 
     def approve_taskspec(self, task_id: int, edited_fields: dict[str, Any] | None, approved_by: str = "operator") -> Task:
         task = self.get_task(task_id)
+        if task.status != TaskStatus.AWAITING_TASKSPEC_APPROVAL.value:
+            raise InvalidTaskStateError(
+                f"Task {task.id} is {task.status}; expected {TaskStatus.AWAITING_TASKSPEC_APPROVAL.value}."
+            )
         if task.approved_task_spec_id is not None:
             raise InvalidTaskStateError("TaskSpec has already been approved.")
         task_spec = self.get_latest_taskspec(task_id)
@@ -572,6 +576,10 @@ class OrchestratorService:
 
     def resume_task(self, task_id: int) -> Task:
         task = self.get_task(task_id)
+        if task.status != TaskStatus.PAUSED.value:
+            raise InvalidTaskStateError(
+                f"Task {task.id} is {task.status}; expected {TaskStatus.PAUSED.value}."
+            )
         for task_node in task.task_nodes:
             if task_node.status == TaskNodeStatus.PAUSED.value:
                 task_node.status = self._resume_status_for_task_node(task_node).value

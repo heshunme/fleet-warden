@@ -548,3 +548,59 @@ def test_create_task_deduplicates_node_ids(db_session) -> None:
 
     assert len(task.task_nodes) == 1
     assert task.task_nodes[0].node_id == node.id
+
+
+def test_approve_taskspec_rejects_cancelled_task(db_session) -> None:
+    service = OrchestratorService(db_session)
+    node = Node(
+        name="node-15",
+        host_alias="node-15",
+        hostname="127.0.0.1",
+        port=22,
+        username="root",
+        ssh_config_source="test",
+        tags=[],
+        capability_warnings=[],
+        is_enabled=True,
+    )
+    db_session.add(node)
+    db_session.commit()
+
+    task = service.create_task(
+        title="No approval after cancel",
+        mode=TaskMode.AGENT_COMMAND,
+        user_input="Inspect safely",
+        node_ids=[node.id],
+    )
+    service.cancel_task(task.id)
+
+    with pytest.raises(InvalidTaskStateError):
+        service.approve_taskspec(task.id, edited_fields=None)
+
+
+def test_resume_task_rejects_non_paused_task(db_session) -> None:
+    service = OrchestratorService(db_session)
+    node = Node(
+        name="node-16",
+        host_alias="node-16",
+        hostname="127.0.0.1",
+        port=22,
+        username="root",
+        ssh_config_source="test",
+        tags=[],
+        capability_warnings=[],
+        is_enabled=True,
+    )
+    db_session.add(node)
+    db_session.commit()
+
+    task = service.create_task(
+        title="No resume when not paused",
+        mode=TaskMode.AGENT_COMMAND,
+        user_input="Inspect safely",
+        node_ids=[node.id],
+    )
+    service.cancel_task(task.id)
+
+    with pytest.raises(InvalidTaskStateError):
+        service.resume_task(task.id)
