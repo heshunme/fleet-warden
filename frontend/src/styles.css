@@ -1,0 +1,277 @@
+:root {
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  color: #13232f;
+  background:
+    radial-gradient(circle at top left, rgba(255, 211, 163, 0.75), transparent 24%),
+    linear-gradient(135deg, #f6f0dd 0%, #e4efe7 48%, #d2e1ef 100%);
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: none;
+  border-radius: 999px;
+  background: #0d5c63;
+  color: #f7fafc;
+  cursor: pointer;
+  padding: 0.8rem 1.2rem;
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+button.secondary {
+  background: #f3b562;
+  color: #13232f;
+}
+
+button.danger {
+  background: #c84b31;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid rgba(19, 35, 47, 0.14);
+  border-radius: 16px;
+  padding: 0.8rem 1rem;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+pre {
+  margin: 0;
+  overflow-x: auto;
+  border-radius: 18px;
+  padding: 1rem;
+  background: rgba(19, 35, 47, 0.92);
+  color: #ebf5ee;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.75rem 0.5rem;
+  border-bottom: 1px solid rgba(19, 35, 47, 0.1);
+  text-align: left;
+}
+
+tbody tr {
+  cursor: pointer;
+}
+
+tbody tr:hover {
+  background: rgba(13, 92, 99, 0.08);
+}
+
+.app-shell {
+  width: min(1400px, calc(100vw - 2rem));
+  margin: 0 auto;
+  padding: 1.5rem 0 3rem;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1.5rem;
+  align-items: start;
+  margin-bottom: 1.5rem;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 5vw, 4.4rem);
+  line-height: 0.95;
+  letter-spacing: -0.05em;
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: #0d5c63;
+  font-size: 0.78rem;
+}
+
+.hero-copy {
+  max-width: 52rem;
+  color: rgba(19, 35, 47, 0.8);
+}
+
+.hero-sidebar,
+.panel {
+  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 28px;
+  box-shadow: 0 20px 40px rgba(19, 35, 47, 0.08);
+}
+
+.hero-sidebar {
+  padding: 1.25rem;
+}
+
+.task-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.pill {
+  background: rgba(13, 92, 99, 0.1);
+  color: #13232f;
+}
+
+.layout {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.panel {
+  padding: 1.2rem;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.panel-header h2,
+.panel-header h3,
+h3 {
+  margin: 0;
+}
+
+.panel-body,
+.stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.grid-two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.node-list,
+.approval-list,
+.event-stream {
+  display: grid;
+  gap: 0.8rem;
+  max-height: 28rem;
+  overflow: auto;
+}
+
+.node-row,
+.approval-card,
+.event-row,
+.stat {
+  padding: 1rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(19, 35, 47, 0.08);
+}
+
+.node-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.node-row span,
+.node-row small,
+.muted {
+  display: block;
+  color: rgba(19, 35, 47, 0.68);
+}
+
+.badge-row,
+.button-row,
+.stat-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.badge,
+.risk {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(13, 92, 99, 0.1);
+  color: #0d5c63;
+}
+
+.risk-low {
+  background: rgba(26, 147, 111, 0.14);
+  color: #1a936f;
+}
+
+.risk-medium {
+  background: rgba(243, 181, 98, 0.18);
+  color: #9c5b00;
+}
+
+.risk-high {
+  background: rgba(200, 75, 49, 0.16);
+  color: #a12f18;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.stat span {
+  display: block;
+  color: rgba(19, 35, 47, 0.65);
+  font-size: 0.78rem;
+}
+
+.error-banner {
+  margin-bottom: 1rem;
+  padding: 1rem 1.25rem;
+  border-radius: 18px;
+  background: rgba(200, 75, 49, 0.15);
+  color: #8f2206;
+}
+
+@media (max-width: 900px) {
+  .hero,
+  .grid-two,
+  .stat-grid {
+    grid-template-columns: 1fr;
+  }
+}
