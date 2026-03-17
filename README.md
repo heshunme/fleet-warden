@@ -42,7 +42,10 @@ FleetWarden 是一个 SSH-first 的 AI 运维控制面。用户通过 Web UI 选
 - 审批队列
 - 基于 SSE 的任务事件更新
 
-当前 agent 逻辑仍是确定性 stub，用于打通流程，不是正式 LLM 集成。
+当前 agent 支持两种生成方式：
+
+- 默认 deterministic stub，用于本地快速跑通流程
+- 通过 LiteLLM 接入真实模型，为 `TaskSpec` 和 proposal 生成提供 LLM 支持
 
 ## 技术栈
 
@@ -92,6 +95,8 @@ FleetWarden 是一个 SSH-first 的 AI 运维控制面。用户通过 Web UI 选
 - Node.js + npm
 - 本机可用的 SSH 配置文件，默认读取 `~/.ssh/config`
 
+如果你要测试真实模型生成，还需要准备模型 provider 对应的 API 凭据。
+
 ### 一键启动
 
 在仓库根目录运行：
@@ -114,6 +119,7 @@ FleetWarden 是一个 SSH-first 的 AI 运维控制面。用户通过 Web UI 选
 ```bash
 cd backend
 uv sync
+cp .env.example .env
 uv run uvicorn app.main:app --reload
 ```
 
@@ -141,19 +147,66 @@ npm run build
 
 ## 运行配置
 
-后端当前配置定义在 `backend/app/config.py`，默认值包括：
+后端配置定义在 `backend/app/config.py`，默认会读取 `backend/.env`。
+
+可以从示例文件开始：
+
+```bash
+cd backend
+cp .env.example .env
+```
+
+主要配置项：
 
 - 数据库：`sqlite:///./fleetwarden.db`（实际位于仓库根目录）
 - SSH 配置路径：`~/.ssh/config`
 - SSH 命令超时：`60s`
 - worker 轮询间隔：`1s`
 - 远程 agent 命令：`codex exec --json`
+- TaskSpec 模型：`FLEETWARDEN_LLM_TASKSPEC_MODEL`
+- Proposal 模型：`FLEETWARDEN_LLM_PROPOSAL_MODEL`
+- LiteLLM API Base 覆盖：`FLEETWARDEN_LLM_API_BASE`
+- LiteLLM API Key 覆盖：`FLEETWARDEN_LLM_API_KEY`
 
 前端默认访问：
 
 - `VITE_API_BASE_URL=http://localhost:8000/api`
 
 如果需要修改前端 API 地址，可在启动前设置环境变量。
+
+### LiteLLM 配置说明
+
+后端只负责通过 LiteLLM 生成：
+
+- `TaskSpec`
+- 每个节点每一轮的 proposal
+
+当前不改变执行链：
+
+- `agent_command` 仍然通过 SSH 执行 shell command
+- `agent_delegation` 仍然走远端 agent executor
+
+最小 `.env` 示例：
+
+```dotenv
+FLEETWARDEN_LLM_TASKSPEC_MODEL=openai/gpt-4o-mini
+FLEETWARDEN_LLM_PROPOSAL_MODEL=openai/gpt-4o-mini
+```
+
+如果你使用 provider 原生环境变量，也可以直接设置，例如：
+
+```bash
+export OPENAI_API_KEY=...
+```
+
+或在 `backend/.env` 中设置 FleetWarden scoped 覆盖：
+
+```dotenv
+FLEETWARDEN_LLM_API_KEY=...
+FLEETWARDEN_LLM_API_BASE=...
+```
+
+如果未配置模型名、LiteLLM 未安装完成、或模型调用失败，系统会自动回退到现有 stub agent，以保证本地开发流程仍可启动和测试。
 
 ## 使用流程
 
