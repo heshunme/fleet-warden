@@ -134,3 +134,40 @@ export interface EventRecord {
   operator_id: string;
   created_at: string | null;
 }
+
+export type CurrentMode = "create" | "taskspec" | "proposal" | "terminal" | "awaiting-proposal" | "running";
+
+export type RightRailTab = "progress" | "inspector" | "evidence";
+
+export interface PreviewCardModel {
+  title: string;
+  description: string;
+  lines: string[];
+  footer: string | null;
+  variant: "code" | "structured" | "json";
+}
+
+export type DetailDrawerState =
+  | {
+      kind: "taskspec";
+      sourceId: number;
+      taskSpec: TaskSpecRecord;
+    }
+  | {
+      kind: "payload";
+      sourceId: number;
+      proposal: ProposalRecord;
+      view: "editable" | "raw";
+    }
+  | {
+      kind: "execution";
+      sourceId: number;
+      executionResult: ExecutionResultRecord;
+      proposalSummary: string | null;
+      nodeLabel: string | null;
+    }
+  | {
+      kind: "event";
+      sourceId: number;
+      event: EventRecord;
+    };

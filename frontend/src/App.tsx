@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import "./styles.css";
+import { ActionConsole } from "./components/ActionConsole";
+import { ContextRail } from "./components/ContextRail";
+import { CreateTaskWorkspace } from "./components/CreateTaskWorkspace";
+import { DetailDrawer } from "./components/DetailDrawer";
+import { NodeSelectionRail } from "./components/NodeSelectionRail";
+import { TaskSummaryRail } from "./components/TaskSummaryRail";
 import {
   approveProposal,
   approveTaskSpec,
@@ -22,11 +28,16 @@ import {
   resumeTask,
 } from "./lib/api";
 import { canApproveTaskSpec, canCancelTask, canPauseTask, canRejectTaskSpec, canResumeTask } from "./lib/guards";
+import { getDefaultRightRailTab } from "./lib/presenters";
 import type {
+  ApprovalRecord,
+  CurrentMode,
+  DetailDrawerState,
   EventRecord,
   ExecutionResultRecord,
   NodeRecord,
   ProposalRecord,
+  RightRailTab,
   TaskMode,
   TaskNodeRecord,
   TaskRecord,
@@ -41,31 +52,23 @@ function connectEvents(path: string, onEvent: () => void) {
   return () => source.close();
 }
 
-function formatTimestamp(value: string | null): string {
-  if (!value) {
-    return "N/A";
-  }
-  return new Date(value).toLocaleString();
+function getProposalHistory(taskNode: TaskNodeRecord | null): ProposalRecord[] {
+  return taskNode?.rounds.flatMap((round) => round.proposals) ?? [];
 }
 
-function summarizeTask(task: TaskRecord | null): string {
-  if (!task) {
-    return "No active task selected.";
-  }
-  if (task.status === "awaiting_taskspec_approval") {
-    return "Review the generated TaskSpec before any node work can continue.";
-  }
-  if (TERMINAL_TASK_STATUSES.has(task.status)) {
-    return "This task has reached a terminal state. Review outcomes and switch tasks if needed.";
-  }
-  return "The system will keep surfacing the next proposal or wait state for this task here.";
+function getLatestApproval(proposals: ProposalRecord[]): ApprovalRecord | null {
+  return proposals.flatMap((proposal) => proposal.approvals).at(-1) ?? null;
 }
 
-type TaskAction = "pause" | "resume" | "cancel";
+function getLatestExecutionResult(proposals: ProposalRecord[]): ExecutionResultRecord | null {
+  return proposals.flatMap((proposal) => proposal.execution_results).at(-1) ?? null;
+}
 
 function App() {
   const currentTaskIdRef = useRef<number | null>(null);
+  const previousTaskIdRef = useRef<number | null>(null);
   const reloadSequenceRef = useRef(0);
+
   const [nodes, setNodes] = useState<NodeRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [currentTaskId, setCurrentTaskId] = useState<number | null>(null);
@@ -75,6 +78,7 @@ function App() {
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [inspectedTaskNodeId, setInspectedTaskNodeId] = useState<number | null>(null);
   const [inspectedTaskNode, setInspectedTaskNode] = useState<TaskNodeRecord | null>(null);
+  const [activeProposalNode, setActiveProposalNode] = useState<TaskNodeRecord | null>(null);
   const [isNodePinned, setIsNodePinned] = useState(false);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [isBooting, setIsBooting] = useState(true);
@@ -90,6 +94,9 @@ function App() {
   const [approvalComment, setApprovalComment] = useState("Approved from UI");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [isRefreshingNodes, setIsRefreshingNodes] = useState(false);
+  const [activeRightTab, setActiveRightTab] = useState<RightRailTab>("progress");
+  const [isRightTabManuallySelected, setIsRightTabManuallySelected] = useState(false);
+  const [detailDrawer, setDetailDrawer] = useState<DetailDrawerState | null>(null);
 
   const reloadDashboard = async (preferredTaskId?: number | null) => {
     const reloadId = reloadSequenceRef.current + 1;
@@ -114,23 +121,19 @@ function App() {
       const selectedTaskStillExists = preferredSelection
         ? taskData.some((task) => task.id === preferredSelection)
         : false;
-
-      const nextTaskId =
-        selectedTaskStillExists
-          ? preferredSelection
-          : taskData[0]?.id ?? null;
+      const nextTaskId = selectedTaskStillExists ? preferredSelection : taskData[0]?.id ?? null;
 
       if (nextTaskId) {
         const task = await fetchTask(nextTaskId);
         if (reloadSequenceRef.current !== reloadId) {
           return;
         }
-        setCurrentTaskId(task.id);
         currentTaskIdRef.current = task.id;
+        setCurrentTaskId(task.id);
         setCurrentTask(task);
       } else {
-        setCurrentTaskId(null);
         currentTaskIdRef.current = null;
+        setCurrentTaskId(null);
         setCurrentTask(null);
         setCurrentTaskSpec(null);
         setEvents([]);
@@ -161,9 +164,7 @@ function App() {
     }
 
     fetchTask(currentTaskId).then(setCurrentTask).catch(() => undefined);
-    fetchTaskEvents(currentTaskId)
-      .then((data) => setEvents(data.slice(-12)))
-      .catch(() => undefined);
+    fetchTaskEvents(currentTaskId).then((data) => setEvents(data.slice(-12))).catch(() => undefined);
     fetchTaskSpec(currentTaskId)
       .then((data) => {
         setCurrentTaskSpec(data);
@@ -185,9 +186,13 @@ function App() {
     });
   }, [currentTaskId]);
 
-  useEffect(() => connectEvents("/proposals/events", () => {
-    reloadDashboard(currentTaskId).catch(() => undefined);
-  }), [currentTaskId]);
+  useEffect(
+    () =>
+      connectEvents("/proposals/events", () => {
+        reloadDashboard(currentTaskId).catch(() => undefined);
+      }),
+    [currentTaskId]
+  );
 
   const currentTaskProposals = useMemo(
     () => pendingProposals.filter((proposal) => proposal.task_id === currentTaskId),
@@ -195,6 +200,15 @@ function App() {
   );
 
   const activeProposal = currentTaskProposals[0] ?? null;
+
+  useEffect(() => {
+    const activeProposalTaskNodeId = activeProposal?.task_node_id;
+    if (!activeProposalTaskNodeId) {
+      setActiveProposalNode(null);
+      return;
+    }
+    fetchTaskNode(activeProposalTaskNodeId).then(setActiveProposalNode).catch(() => undefined);
+  }, [activeProposal?.id, activeProposal?.task_node_id]);
 
   useEffect(() => {
     if (isNodePinned) {
@@ -235,37 +249,41 @@ function App() {
     [nodes, selectedNodeIds]
   );
 
-  const summaryCounts = useMemo(() => {
-    return tasks.reduce(
-      (accumulator, task) => {
-        if (task.status === "awaiting_taskspec_approval") {
-          accumulator.awaitingTaskSpec += 1;
-        }
-        if (task.status === "running") {
-          accumulator.running += 1;
-        }
-        if (task.status === "paused") {
-          accumulator.paused += 1;
-        }
-        return accumulator;
-      },
-      { awaitingTaskSpec: 0, running: 0, paused: 0 }
-    );
-  }, [tasks]);
+  const summaryCounts = useMemo(
+    () =>
+      tasks.reduce(
+        (accumulator, task) => {
+          if (task.status === "awaiting_taskspec_approval") {
+            accumulator.awaitingTaskSpec += 1;
+          }
+          if (task.status === "running") {
+            accumulator.running += 1;
+          }
+          if (task.status === "paused") {
+            accumulator.paused += 1;
+          }
+          return accumulator;
+        },
+        { awaitingTaskSpec: 0, running: 0, paused: 0 }
+      ),
+    [tasks]
+  );
 
-  const nodeStatusCounts = useMemo(() => {
-    return (currentTask?.task_nodes ?? []).reduce<Record<string, number>>((accumulator, taskNode) => {
-      accumulator[taskNode.status] = (accumulator[taskNode.status] ?? 0) + 1;
-      return accumulator;
-    }, {});
-  }, [currentTask?.task_nodes]);
+  const nodeStatusCounts = useMemo(
+    () =>
+      (currentTask?.task_nodes ?? []).reduce<Record<string, number>>((accumulator, taskNode) => {
+        accumulator[taskNode.status] = (accumulator[taskNode.status] ?? 0) + 1;
+        return accumulator;
+      }, {}),
+    [currentTask?.task_nodes]
+  );
 
   const hasAwaitingProposalNode = useMemo(
     () => (currentTask?.task_nodes ?? []).some((taskNode) => taskNode.status === "awaiting_proposal"),
     [currentTask?.task_nodes]
   );
 
-  const currentMode = useMemo<"create" | "taskspec" | "proposal" | "terminal" | "awaiting-proposal" | "running">(() => {
+  const currentMode = useMemo<CurrentMode>(() => {
     if (isCreatingTask || !currentTask) {
       return "create";
     }
@@ -284,14 +302,59 @@ function App() {
     return "running";
   }, [activeProposal, currentTask, hasAwaitingProposalNode, isCreatingTask]);
 
+  useEffect(() => {
+    const defaultTab = getDefaultRightRailTab(currentMode);
+    const taskChanged = previousTaskIdRef.current !== currentTaskId;
+
+    if (taskChanged) {
+      previousTaskIdRef.current = currentTaskId;
+      setActiveRightTab(defaultTab);
+      setIsRightTabManuallySelected(false);
+      setDetailDrawer(null);
+      return;
+    }
+
+    if (!isRightTabManuallySelected) {
+      setActiveRightTab(defaultTab);
+    }
+  }, [currentMode, currentTaskId, isRightTabManuallySelected]);
+
+  const activeProposalHistory = useMemo(() => getProposalHistory(activeProposalNode), [activeProposalNode]);
+  const activeProposalLatestApproval = useMemo(() => getLatestApproval(activeProposalHistory), [activeProposalHistory]);
+  const activeProposalLatestResult = useMemo(() => getLatestExecutionResult(activeProposalHistory), [activeProposalHistory]);
+
+  const inspectedProposalHistory = useMemo(() => getProposalHistory(inspectedTaskNode), [inspectedTaskNode]);
+  const latestProposal = inspectedProposalHistory.at(-1) ?? null;
+  const latestResult = useMemo(() => getLatestExecutionResult(inspectedProposalHistory), [inspectedProposalHistory]);
+  const evidenceResults = useMemo(
+    () =>
+      inspectedProposalHistory
+        .flatMap((proposal) => proposal.execution_results.map((result) => ({ result, proposal })))
+        .slice(-4)
+        .reverse(),
+    [inspectedProposalHistory]
+  );
+  const evidenceApprovals = useMemo(
+    () =>
+      inspectedProposalHistory
+        .flatMap((proposal) => proposal.approvals.map((approval) => ({ approval, proposal })))
+        .slice(-4)
+        .reverse(),
+    [inspectedProposalHistory]
+  );
+
   const toggleNode = (nodeId: number) => {
-    setSelectedNodeIds((current) =>
-      current.includes(nodeId) ? current.filter((id) => id !== nodeId) : [...current, nodeId]
-    );
+    setSelectedNodeIds((current) => (current.includes(nodeId) ? current.filter((id) => id !== nodeId) : [...current, nodeId]));
   };
 
   const removeNode = (nodeId: number) => {
     setSelectedNodeIds((current) => current.filter((id) => id !== nodeId));
+  };
+
+  const handleSelectTask = (taskId: number | null) => {
+    setIsCreatingTask(false);
+    currentTaskIdRef.current = taskId;
+    setCurrentTaskId(taskId);
   };
 
   const handleRefreshNodes = async () => {
@@ -316,6 +379,7 @@ function App() {
         node_ids: selectedNodeIds,
         max_rounds_per_node: maxRoundsPerNode,
       });
+      currentTaskIdRef.current = task.id;
       setCurrentTaskId(task.id);
       setCurrentTask(task);
       setIsCreatingTask(false);
@@ -328,7 +392,7 @@ function App() {
     }
   };
 
-  const handleTaskAction = async (action: TaskAction) => {
+  const handleTaskAction = async (action: "pause" | "resume" | "cancel") => {
     if (!currentTask) {
       return;
     }
@@ -387,6 +451,7 @@ function App() {
       return;
     }
     setBusyAction(`${action}-${activeProposal.id}`);
+    setDetailDrawer(null);
     try {
       if (action === "approve") {
         await approveProposal(activeProposal.id, { comment: approvalComment });
@@ -408,13 +473,55 @@ function App() {
     setIsNodePinned(pinned);
   };
 
-  const selectedNodeSummary =
-    selectedNodes.length > 0
-      ? `${selectedNodes.length} node${selectedNodes.length === 1 ? "" : "s"} selected`
-      : "Choose at least one node to initialize a task.";
+  const openTaskSpecDrawer = () => {
+    if (!currentTaskSpec) {
+      return;
+    }
+    setDetailDrawer({
+      kind: "taskspec",
+      sourceId: currentTaskSpec.id,
+      taskSpec: currentTaskSpec,
+    });
+  };
 
-  const latestResult = inspectedTaskNode?.rounds.at(-1)?.proposals.at(-1)?.execution_results.at(-1) ?? null;
-  const latestProposal = inspectedTaskNode?.rounds.at(-1)?.proposals.at(-1) ?? null;
+  const openPayloadDrawer = (proposal: ProposalRecord, view: "editable" | "raw" = "editable") => {
+    setDetailDrawer({
+      kind: "payload",
+      sourceId: proposal.id,
+      proposal,
+      view,
+    });
+  };
+
+  const openExecutionDrawer = (
+    executionResult: ExecutionResultRecord,
+    proposalSummary: string | null,
+    nodeLabel: string | null
+  ) => {
+    setDetailDrawer({
+      kind: "execution",
+      sourceId: executionResult.id,
+      executionResult,
+      proposalSummary,
+      nodeLabel,
+    });
+  };
+
+  const openEventDrawer = (event: EventRecord) => {
+    setDetailDrawer({
+      kind: "event",
+      sourceId: event.id,
+      event,
+    });
+  };
+
+  const handlePayloadViewChange = (view: "editable" | "raw") => {
+    setDetailDrawer((current) => (current?.kind === "payload" ? { ...current, view } : current));
+  };
+
+  const pauseDisabled = !currentTask || !canPauseTask(currentTask) || busyAction === "pause";
+  const resumeDisabled = !currentTask || !canResumeTask(currentTask) || busyAction === "resume";
+  const cancelDisabled = !currentTask || !canCancelTask(currentTask) || busyAction === "cancel";
 
   return (
     <main className="workbench">
@@ -427,16 +534,13 @@ function App() {
         <div className="topbar-controls">
           <label className="task-switcher">
             <span>Current Task</span>
-              <select
-                value={currentTaskId ?? ""}
-                onChange={(event) => {
-                  const rawValue = event.target.value;
-                  setIsCreatingTask(false);
-                  const nextTaskId = rawValue ? Number(rawValue) : null;
-                  currentTaskIdRef.current = nextTaskId;
-                  setCurrentTaskId(nextTaskId);
-                }}
-              >
+            <select
+              value={currentTaskId ?? ""}
+              onChange={(event) => {
+                const rawValue = event.target.value;
+                handleSelectTask(rawValue ? Number(rawValue) : null);
+              }}
+            >
               <option value="">No task selected</option>
               {tasks.map((task) => (
                 <option key={task.id} value={task.id}>
@@ -461,603 +565,123 @@ function App() {
 
       {error ? <div className="error-banner">{error}</div> : null}
 
-      <section className="workspace-grid">
-        <aside className="column column-left">
+      <section className={`workspace-grid ${currentMode === "create" ? "workspace-grid-create" : ""}`}>
+        <aside className="column">
           {currentMode === "create" ? (
-            <section className="panel fill-panel">
-              <div className="panel-header">
-                <h2>Node Selection</h2>
-                <button className="secondary" type="button" onClick={handleRefreshNodes} disabled={isRefreshingNodes}>
-                  {isRefreshingNodes ? "Refreshing..." : "Refresh SSH Nodes"}
-                </button>
-              </div>
-              <div className="panel-body setup-grid">
-                <label>
-                  <span>Search Nodes</span>
-                  <input
-                    value={nodeQuery}
-                    onChange={(event) => setNodeQuery(event.target.value)}
-                    placeholder="host, alias, hostname"
-                  />
-                </label>
-
-                <div className="selection-summary">
-                  <strong>{selectedNodeSummary}</strong>
-                  <div className="token-row">
-                    {selectedNodes.map((node) => (
-                      <button
-                        key={node.id}
-                        type="button"
-                        className="token"
-                        onClick={() => removeNode(node.id)}
-                      >
-                        {node.host_alias}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="scroll-card node-picker-list">
-                  {filteredNodes.map((node) => {
-                    const selected = selectedNodeIds.includes(node.id);
-                    return (
-                      <button
-                        key={node.id}
-                        type="button"
-                        className={`picker-row ${selected ? "picker-row-active" : ""}`}
-                        onClick={() => toggleNode(node.id)}
-                      >
-                        <div>
-                          <strong>{node.host_alias}</strong>
-                          <span>{node.username ?? "root"}@{node.hostname}:{node.port}</span>
-                          {node.capability_warnings[0] ? <small>{node.capability_warnings.join(", ")}</small> : null}
-                        </div>
-                        <span className="picker-state">{selected ? "Selected" : "Add"}</span>
-                      </button>
-                    );
-                  })}
-                  {filteredNodes.length === 0 ? <p className="muted">No nodes match the current query.</p> : null}
-                </div>
-              </div>
-            </section>
+            <NodeSelectionRail
+              filteredNodes={filteredNodes}
+              isRefreshingNodes={isRefreshingNodes}
+              nodeQuery={nodeQuery}
+              onNodeQueryChange={setNodeQuery}
+              onRefreshNodes={handleRefreshNodes}
+              onRemoveNode={removeNode}
+              onToggleNode={toggleNode}
+              selectedNodeIds={selectedNodeIds}
+              selectedNodes={selectedNodes}
+            />
           ) : (
-            <section className="panel fill-panel">
-              <div className="panel-header">
-                <h2>Task Context</h2>
-                <span className={`pill pill-${currentTask?.status ?? "idle"}`}>{currentTask?.status ?? "idle"}</span>
-              </div>
-              <div className="panel-body info-grid">
-                <div className="stat-grid compact-stats">
-                  <div className="stat">
-                    <span>Mode</span>
-                    <strong>{currentTask?.mode ?? "N/A"}</strong>
-                  </div>
-                  <div className="stat">
-                    <span>Nodes</span>
-                    <strong>{currentTask?.task_nodes.length ?? 0}</strong>
-                  </div>
-                  <div className="stat">
-                    <span>Rounds</span>
-                    <strong>{currentTask?.max_rounds_per_node ?? 0}</strong>
-                  </div>
-                  <div className="stat">
-                    <span>Updated</span>
-                    <strong>{currentTask ? formatTimestamp(currentTask.updated_at) : "N/A"}</strong>
-                  </div>
-                </div>
-
-                <div className="context-block">
-                  <span className="section-label">Operator Goal</span>
-                  <p>{currentTask?.user_input ?? "No current task selected."}</p>
-                </div>
-
-                <div className="context-block">
-                  <span className="section-label">TaskSpec Goal</span>
-                  <p>{currentTaskSpec?.goal ?? "TaskSpec not available yet."}</p>
-                </div>
-
-                <div className="context-lists">
-                  <CompactList title="Constraints" items={currentTaskSpec?.constraints ?? []} />
-                  <CompactList title="Success Criteria" items={currentTaskSpec?.success_criteria ?? []} />
-                  <CompactList title="Risk Notes" items={currentTaskSpec?.risk_notes ?? []} />
-                  <CompactList title="Initial Todo" items={currentTaskSpec?.initial_todo_template ?? []} />
-                </div>
-              </div>
-            </section>
+            <TaskSummaryRail
+              currentMode={currentMode}
+              task={currentTask}
+              taskSpec={currentTaskSpec}
+              onOpenTaskSpec={openTaskSpecDrawer}
+            />
           )}
         </aside>
 
-        <section className="column column-main">
-          <section className="panel fill-panel action-panel">
-            <div className="panel-header">
-              <div>
-                <h2>Action Console</h2>
-                <p className="muted">{summarizeTask(currentTask)}</p>
-              </div>
-              {currentMode === "proposal" ? (
-                <span className="signal">{currentTaskProposals.length} pending in this task</span>
-              ) : null}
-            </div>
-
-            <div className="panel-body">
-              {currentMode === "create" ? (
-                <div className="main-stage">
-                  <div className="action-intro">
-                    <h3>Initialize a new task</h3>
-                    <p className="muted">
-                      Define the task once, then the console will keep bringing the next approval or wait state to the center.
-                    </p>
-                  </div>
-
-                  <div className="form-grid">
-                    <label>
-                      <span>Title</span>
-                      <input value={title} onChange={(event) => setTitle(event.target.value)} />
-                    </label>
-
-                    <label>
-                      <span>Mode</span>
-                      <select value={mode} onChange={(event) => setMode(event.target.value as TaskMode)}>
-                        <option value="agent_command">Mode 3 · Agent Command</option>
-                        <option value="agent_delegation">Mode 4 · Agent Delegation</option>
-                      </select>
-                    </label>
-
-                    <label className="full-span">
-                      <span>Natural Language Goal</span>
-                      <textarea rows={5} value={userInput} onChange={(event) => setUserInput(event.target.value)} />
-                    </label>
-
-                    <label>
-                      <span>Max Rounds Per Node</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={10}
-                        value={maxRoundsPerNode}
-                        onChange={(event) => setMaxRoundsPerNode(Math.max(1, Number(event.target.value) || 1))}
-                      />
-                    </label>
-
-                    <div className="summary-card">
-                      <span className="section-label">Selected Nodes</span>
-                      <div className="token-row">
-                        {selectedNodes.map((node) => (
-                          <span key={node.id} className="token token-static">{node.host_alias}</span>
-                        ))}
-                      </div>
-                      {selectedNodes.length === 0 ? <p className="muted">Pick one or more nodes from the left column.</p> : null}
-                    </div>
-                  </div>
-
-                  <div className="button-row">
-                    <button
-                      type="button"
-                      onClick={handleCreateTask}
-                      disabled={busyAction === "create-task" || selectedNodeIds.length === 0}
-                    >
-                      {busyAction === "create-task" ? "Initializing..." : "Initialize Task"}
-                    </button>
-                    {currentTask ? (
-                      <button className="secondary" type="button" onClick={() => setIsCreatingTask(false)}>
-                        Back to Current Task
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
-
-              {currentMode === "taskspec" && currentTask ? (
-                <div className="main-stage">
-                  <div className="action-intro">
-                    <h3>Approve TaskSpec to begin node work</h3>
-                    <p className="muted">
-                      This is the only task-level gate. Once approved, the console will start surfacing node proposals one at a time.
-                    </p>
-                  </div>
-
-                  <label className="full-span">
-                    <span>TaskSpec Goal</span>
-                    <textarea
-                      rows={6}
-                      value={goalDraft}
-                      onChange={(event) => setGoalDraft(event.target.value)}
-                      disabled={!canApproveTaskSpec(currentTask)}
-                    />
-                  </label>
-
-                  <div className="summary-card">
-                    <span className="section-label">What happens next</span>
-                    <p>After approval, FleetWarden will wait for node proposals and keep the next pending one in this center panel.</p>
-                  </div>
-
-                  <div className="button-row">
-                    <button
-                      type="button"
-                      onClick={handleApproveTaskSpec}
-                      disabled={!canApproveTaskSpec(currentTask) || busyAction === "approve-taskspec"}
-                    >
-                      {busyAction === "approve-taskspec" ? "Approving..." : "Approve TaskSpec"}
-                    </button>
-                    <button
-                      className="secondary"
-                      type="button"
-                      onClick={handleRejectTaskSpec}
-                      disabled={!canRejectTaskSpec(currentTask) || busyAction === "reject-taskspec"}
-                    >
-                      {busyAction === "reject-taskspec" ? "Rejecting..." : "Reject"}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
-              {currentMode === "proposal" && activeProposal ? (
-                <div className="main-stage proposal-stage">
-                  <div className="proposal-head">
-                    <div>
-                      <h3>{activeProposal.summary}</h3>
-                      <p className="muted">
-                        {activeProposal.node_label ?? "Unknown node"} · Proposal #{activeProposal.id}
-                      </p>
-                    </div>
-                    <span className={`risk risk-${activeProposal.risk_level}`}>{activeProposal.risk_level}</span>
-                  </div>
-
-                  <div className="proposal-grid">
-                    <div className="summary-card proposal-content-card">
-                      <span className="section-label">Editable Content</span>
-                      <pre>{JSON.stringify(activeProposal.editable_content, null, 2)}</pre>
-                    </div>
-
-                    <div className="summary-card proposal-context-card">
-                      <span className="section-label">Decision Context</span>
-                      <CompactList title="Todo Delta" items={activeProposal.todo_delta} />
-                      <p><strong>Rationale:</strong> {activeProposal.rationale}</p>
-                      <p><strong>Success Hypothesis:</strong> {activeProposal.success_hypothesis}</p>
-                      <CompactApprovalList approvals={latestProposal?.approvals ?? []} />
-                    </div>
-                  </div>
-
-                  <label>
-                    <span>Decision Comment</span>
-                    <input value={approvalComment} onChange={(event) => setApprovalComment(event.target.value)} />
-                  </label>
-
-                  <div className="queue-strip">
-                    {currentTaskProposals.map((proposal) => (
-                      <button
-                        key={proposal.id}
-                        type="button"
-                        className={`queue-chip ${proposal.id === activeProposal.id ? "queue-chip-active" : ""}`}
-                        onClick={() => {
-                          if (proposal.task_node_id) {
-                            inspectNode(proposal.task_node_id, false);
-                          }
-                        }}
-                      >
-                        {proposal.node_label ?? `Proposal ${proposal.id}`}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="button-row">
-                    <button
-                      type="button"
-                      onClick={() => handleProposalAction("approve")}
-                      disabled={busyAction === `approve-${activeProposal.id}`}
-                    >
-                      {busyAction === `approve-${activeProposal.id}` ? "Approving..." : "Approve"}
-                    </button>
-                    <button
-                      className="secondary"
-                      type="button"
-                      onClick={() => handleProposalAction("pause-node")}
-                      disabled={busyAction === `pause-node-${activeProposal.id}`}
-                    >
-                      {busyAction === `pause-node-${activeProposal.id}` ? "Pausing..." : "Pause Node"}
-                    </button>
-                    <button
-                      className="danger"
-                      type="button"
-                      onClick={() => handleProposalAction("reject")}
-                      disabled={busyAction === `reject-${activeProposal.id}`}
-                    >
-                      {busyAction === `reject-${activeProposal.id}` ? "Rejecting..." : "Reject"}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
-              {currentMode === "running" && currentTask ? (
-                <div className="main-stage">
-                  <div className="action-intro">
-                    <h3>Task is running</h3>
-                    <p className="muted">
-                      No user decision is required right now. Keep an eye on the right column for node status changes and the latest execution evidence.
-                    </p>
-                  </div>
-
-                  <div className="summary-grid">
-                    <div className="summary-card">
-                      <span className="section-label">Current State</span>
-                      <p>{currentTask.status}</p>
-                      <p>{Object.keys(nodeStatusCounts).length} node state buckets currently active.</p>
-                    </div>
-                    <div className="summary-card">
-                      <span className="section-label">Next Expected Transition</span>
-                      <p>Either a node will emit a fresh proposal, or an executing node will produce a new result.</p>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {currentMode === "awaiting-proposal" && currentTask ? (
-                <div className="main-stage">
-                  <div className="action-intro">
-                    <h3>Preparing the next proposal</h3>
-                    <p className="muted">
-                      A node is in <code>awaiting_proposal</code>. The approval buttons will appear here as soon as the worker creates the next proposal.
-                    </p>
-                  </div>
-
-                  <div className="summary-grid">
-                    <div className="summary-card">
-                      <span className="section-label">What the system is doing</span>
-                      <p>FleetWarden is waiting for the background worker to inspect the node and produce the next proposed action.</p>
-                    </div>
-                    <div className="summary-card">
-                      <span className="section-label">What you can do now</span>
-                      <p>Keep this task open, or refresh to check whether the proposal is ready. You can still pause or cancel the task from the right column.</p>
-                    </div>
-                  </div>
-
-                  <div className="button-row">
-                    <button type="button" onClick={() => reloadDashboard(currentTask.id)}>
-                      Refresh Status
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
-              {currentMode === "terminal" && currentTask ? (
-                <div className="main-stage">
-                  <div className="action-intro">
-                    <h3>Task finished</h3>
-                    <p className="muted">Review outcomes here, then switch tasks or initialize a new one from the top bar.</p>
-                  </div>
-
-                  <div className="summary-grid">
-                    <div className="summary-card">
-                      <span className="section-label">Final Status</span>
-                      <p>{currentTask.status}</p>
-                    </div>
-                    <div className="summary-card">
-                      <span className="section-label">Node Outcomes</span>
-                      {currentTask.task_nodes.map((taskNode) => (
-                        <p key={taskNode.id}>
-                          <strong>{taskNode.node.host_alias}:</strong>{" "}
-                          {taskNode.success_summary ?? taskNode.failure_summary ?? taskNode.status}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {!isBooting && !currentTask && currentMode !== "create" ? (
-                <div className="empty-state">
-                  <h3>No task selected</h3>
-                  <p className="muted">Use the top bar to create a new task or switch to an existing one.</p>
-                </div>
-              ) : null}
-            </div>
-          </section>
+        <section className="column">
+          {currentMode === "create" ? (
+            <CreateTaskWorkspace
+              busyAction={busyAction}
+              currentTaskExists={Boolean(currentTask)}
+              maxRoundsPerNode={maxRoundsPerNode}
+              mode={mode}
+              onCreateTask={handleCreateTask}
+              onMaxRoundsChange={setMaxRoundsPerNode}
+              onModeChange={setMode}
+              onReturnToTask={() => setIsCreatingTask(false)}
+              onTitleChange={setTitle}
+              onUserInputChange={setUserInput}
+              selectedNodeIds={selectedNodeIds}
+              selectedNodes={selectedNodes}
+              title={title}
+              userInput={userInput}
+            />
+          ) : (
+            <ActionConsole
+              approvalComment={approvalComment}
+              busyAction={busyAction}
+              canApproveTaskSpecAction={Boolean(currentTask && canApproveTaskSpec(currentTask))}
+              canRejectTaskSpecAction={Boolean(currentTask && canRejectTaskSpec(currentTask))}
+              currentMode={currentMode}
+              currentTask={currentTask}
+              currentTaskProposals={currentTaskProposals}
+              currentTaskSpec={currentTaskSpec}
+              activeProposal={activeProposal}
+              activeProposalLatestApproval={activeProposalLatestApproval}
+              activeProposalLatestResult={activeProposalLatestResult}
+              goalDraft={goalDraft}
+              nodeLabel={activeProposalNode?.node.host_alias ?? activeProposal?.node_label ?? null}
+              onApprovalCommentChange={setApprovalComment}
+              onApproveProposal={() => handleProposalAction("approve")}
+              onApproveTaskSpec={handleApproveTaskSpec}
+              onGoalDraftChange={setGoalDraft}
+              onOpenPayload={openPayloadDrawer}
+              onOpenTaskSpec={openTaskSpecDrawer}
+              onPauseProposalNode={() => handleProposalAction("pause-node")}
+              onRefreshAwaitingProposal={() => {
+                if (currentTask) {
+                  reloadDashboard(currentTask.id).catch(() => undefined);
+                }
+              }}
+              onRejectProposal={() => handleProposalAction("reject")}
+              onRejectTaskSpec={handleRejectTaskSpec}
+            />
+          )}
         </section>
 
-        <aside className="column column-right">
-          <section className="panel panel-split">
-            <div className="panel-header">
-              <h2>Progress</h2>
-              <div className="button-row">
-                <button
-                  className="secondary"
-                  type="button"
-                  onClick={() => handleTaskAction("pause")}
-                  disabled={!currentTask || !canPauseTask(currentTask) || busyAction === "pause"}
-                >
-                  Pause
-                </button>
-                <button
-                  className="secondary"
-                  type="button"
-                  onClick={() => handleTaskAction("resume")}
-                  disabled={!currentTask || !canResumeTask(currentTask) || busyAction === "resume"}
-                >
-                  Resume
-                </button>
-                <button
-                  className="danger"
-                  type="button"
-                  onClick={() => handleTaskAction("cancel")}
-                  disabled={!currentTask || !canCancelTask(currentTask) || busyAction === "cancel"}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-
-            <div className="panel-body progress-layout">
-              <div className="summary-card">
-                <span className="section-label">Node Distribution</span>
-                <div className="token-row">
-                  {Object.entries(nodeStatusCounts).map(([status, count]) => (
-                    <span key={status} className="token token-static">{status}: {count}</span>
-                  ))}
-                  {Object.keys(nodeStatusCounts).length === 0 ? <span className="muted">No node state yet.</span> : null}
-                </div>
-              </div>
-
-              <div className="scroll-card progress-list">
-                {(currentTask?.task_nodes ?? []).map((taskNode) => (
-                  <button
-                    key={taskNode.id}
-                    type="button"
-                    className={`list-row ${inspectedTaskNodeId === taskNode.id ? "list-row-active" : ""}`}
-                    onClick={() => inspectNode(taskNode.id, true)}
-                  >
-                    <div>
-                      <strong>{taskNode.node.host_alias}</strong>
-                      <span>{taskNode.status}</span>
-                    </div>
-                    <small>Round {taskNode.current_round}</small>
-                  </button>
-                ))}
-                {!currentTask?.task_nodes.length ? <p className="muted">Task nodes will appear here.</p> : null}
-              </div>
-
-              <div className="scroll-card event-list">
-                {events.slice(-8).reverse().map((event) => (
-                  <article key={event.id} className="event-row">
-                    <strong>{event.event_type}</strong>
-                    <span>{formatTimestamp(event.created_at)}</span>
-                    <small>{JSON.stringify(event.payload)}</small>
-                  </article>
-                ))}
-                {events.length === 0 ? <p className="muted">No events yet.</p> : null}
-              </div>
-            </div>
-          </section>
-
-          <section className="panel panel-split">
-            <div className="panel-header">
-              <div>
-                <h2>Node Inspector</h2>
-                <p className="muted">
-                  {isNodePinned ? "Pinned to your selected node." : "Following the active proposal automatically."}
-                </p>
-              </div>
-              {isNodePinned ? (
-                <button className="secondary" type="button" onClick={() => setIsNodePinned(false)}>
-                  Unpin
-                </button>
-              ) : null}
-            </div>
-
-            <div className="panel-body inspector-layout">
-              {inspectedTaskNode ? (
-                <>
-                  <div className="stat-grid compact-stats">
-                    <div className="stat">
-                      <span>Node</span>
-                      <strong>{inspectedTaskNode.node.host_alias}</strong>
-                    </div>
-                    <div className="stat">
-                      <span>Status</span>
-                      <strong>{inspectedTaskNode.status}</strong>
-                    </div>
-                    <div className="stat">
-                      <span>Round</span>
-                      <strong>{inspectedTaskNode.current_round}</strong>
-                    </div>
-                    <div className="stat">
-                      <span>Last Result</span>
-                      <strong>{formatTimestamp(inspectedTaskNode.last_result_at)}</strong>
-                    </div>
-                  </div>
-
-                  <div className="summary-card inspector-todo-card">
-                    <span className="section-label">Current Todo</span>
-                    <CompactList title="" items={inspectedTaskNode.agent_state?.todo_items ?? []} hideTitle />
-                  </div>
-
-                  <div className="summary-card inspector-proposal-card">
-                    <span className="section-label">Latest Proposal</span>
-                    <p>{latestProposal?.summary ?? "No proposal yet."}</p>
-                  </div>
-
-                  <div className="summary-card">
-                    <span className="section-label">Latest Execution</span>
-                    <ExecutionSummary result={latestResult} />
-                  </div>
-
-                  <div className="scroll-card history-list">
-                    {inspectedTaskNode.rounds.map((round) => (
-                      <article key={round.id} className="event-row">
-                        <strong>Round {round.index}</strong>
-                        <span>{round.status}</span>
-                        <small>{round.proposals.map((proposal) => proposal.summary).join(" | ") || "No proposal summary"}</small>
-                      </article>
-                    ))}
-                    {inspectedTaskNode.rounds.length === 0 ? <p className="muted">No rounds yet.</p> : null}
-                  </div>
-                </>
-              ) : (
-                <div className="empty-state">
-                  <h3>No node selected</h3>
-                  <p className="muted">Choose a task node from progress or wait for the next proposal to focus one automatically.</p>
-                </div>
-              )}
-            </div>
-          </section>
-        </aside>
+        {currentMode !== "create" ? (
+          <ContextRail
+            activeRightTab={activeRightTab}
+            busyAction={busyAction}
+            cancelDisabled={cancelDisabled}
+            currentMode={currentMode}
+            currentTask={currentTask}
+            evidenceApprovals={evidenceApprovals}
+            evidenceResults={evidenceResults}
+            events={events}
+            inspectedTaskNode={inspectedTaskNode}
+            inspectedTaskNodeId={inspectedTaskNodeId}
+            isNodePinned={isNodePinned}
+            latestProposal={latestProposal}
+            latestResult={latestResult}
+            nodeStatusCounts={nodeStatusCounts}
+            onInspectNode={inspectNode}
+            onOpenEvent={openEventDrawer}
+            onOpenExecution={openExecutionDrawer}
+            onOpenPayload={openPayloadDrawer}
+            onSelectTab={(tab) => {
+              setActiveRightTab(tab);
+              setIsRightTabManuallySelected(true);
+            }}
+            onTaskAction={handleTaskAction}
+            onUnpin={() => setIsNodePinned(false)}
+            pauseDisabled={pauseDisabled}
+            resumeDisabled={resumeDisabled}
+          />
+        ) : null}
       </section>
+
+      <DetailDrawer
+        drawer={detailDrawer}
+        onClose={() => setDetailDrawer(null)}
+        onPayloadViewChange={handlePayloadViewChange}
+      />
+
+      {!isBooting && !currentTask && currentMode !== "create" ? (
+        <div className="error-banner">No task is selected yet. Start a task or switch to one from the top bar.</div>
+      ) : null}
     </main>
-  );
-}
-
-function CompactList({
-  title,
-  items,
-  hideTitle = false,
-}: {
-  title: string;
-  items: string[];
-  hideTitle?: boolean;
-}) {
-  return (
-    <div className="mini-list">
-      {hideTitle ? null : <span className="section-label">{title}</span>}
-      {items.length > 0 ? (
-        <ul>
-          {items.map((item) => <li key={item}>{item}</li>)}
-        </ul>
-      ) : (
-        <p className="muted">No items.</p>
-      )}
-    </div>
-  );
-}
-
-function CompactApprovalList({ approvals }: { approvals: ProposalRecord["approvals"] }) {
-  return (
-    <div className="mini-list">
-      <span className="section-label">Recent Approvals</span>
-      {approvals.length > 0 ? (
-        <ul>
-          {approvals.map((approval) => (
-            <li key={approval.id}>
-              {approval.decision} by {approval.approved_by}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="muted">No prior approvals on this node yet.</p>
-      )}
-    </div>
-  );
-}
-
-function ExecutionSummary({ result }: { result: ExecutionResultRecord | null }) {
-  if (!result) {
-    return <p>No execution result yet.</p>;
-  }
-
-  return (
-    <details>
-      <summary>{result.execution_summary}</summary>
-      {result.stdout ? <pre>{result.stdout}</pre> : null}
-      {result.stderr ? <pre>{result.stderr}</pre> : null}
-    </details>
   );
 }
 
