@@ -64,6 +64,19 @@ function getLatestExecutionResult(proposals: ProposalRecord[]): ExecutionResultR
   return proposals.flatMap((proposal) => proposal.execution_results).at(-1) ?? null;
 }
 
+function sortTasksByNewestCreated(tasks: TaskRecord[]): TaskRecord[] {
+  return [...tasks].sort((left, right) => {
+    const rightCreatedAt = Date.parse(right.created_at);
+    const leftCreatedAt = Date.parse(left.created_at);
+
+    if (rightCreatedAt !== leftCreatedAt) {
+      return rightCreatedAt - leftCreatedAt;
+    }
+
+    return right.id - left.id;
+  });
+}
+
 function App() {
   const currentTaskIdRef = useRef<number | null>(null);
   const previousTaskIdRef = useRef<number | null>(null);
@@ -113,15 +126,17 @@ function App() {
         return;
       }
 
+      const sortedTasks = sortTasksByNewestCreated(taskData);
+
       setNodes(nodeData);
-      setTasks(taskData);
+      setTasks(sortedTasks);
       setPendingProposals(proposalData);
 
       const preferredSelection = preferredTaskId ?? currentTaskIdRef.current;
       const selectedTaskStillExists = preferredSelection
-        ? taskData.some((task) => task.id === preferredSelection)
+        ? sortedTasks.some((task) => task.id === preferredSelection)
         : false;
-      const nextTaskId = selectedTaskStillExists ? preferredSelection : taskData[0]?.id ?? null;
+      const nextTaskId = selectedTaskStillExists ? preferredSelection : sortedTasks[0]?.id ?? null;
 
       if (nextTaskId) {
         const task = await fetchTask(nextTaskId);
@@ -347,10 +362,6 @@ function App() {
     setSelectedNodeIds((current) => (current.includes(nodeId) ? current.filter((id) => id !== nodeId) : [...current, nodeId]));
   };
 
-  const removeNode = (nodeId: number) => {
-    setSelectedNodeIds((current) => current.filter((id) => id !== nodeId));
-  };
-
   const handleSelectTask = (taskId: number | null) => {
     setIsCreatingTask(false);
     currentTaskIdRef.current = taskId;
@@ -574,7 +585,6 @@ function App() {
               nodeQuery={nodeQuery}
               onNodeQueryChange={setNodeQuery}
               onRefreshNodes={handleRefreshNodes}
-              onRemoveNode={removeNode}
               onToggleNode={toggleNode}
               selectedNodeIds={selectedNodeIds}
               selectedNodes={selectedNodes}

@@ -7,7 +7,6 @@ interface NodeSelectionRailProps {
   onNodeQueryChange: (value: string) => void;
   onRefreshNodes: () => void;
   onToggleNode: (nodeId: number) => void;
-  onRemoveNode: (nodeId: number) => void;
   selectedNodeIds: number[];
   selectedNodes: NodeRecord[];
 }
@@ -18,7 +17,6 @@ export function NodeSelectionRail({
   nodeQuery,
   onNodeQueryChange,
   onRefreshNodes,
-  onRemoveNode,
   onToggleNode,
   selectedNodeIds,
   selectedNodes,
@@ -26,21 +24,21 @@ export function NodeSelectionRail({
   const selectedNodeSummary =
     selectedNodes.length > 0
       ? `${selectedNodes.length} node${selectedNodes.length === 1 ? "" : "s"} selected`
-      : "Choose at least one node to initialize a task.";
+      : "No nodes selected yet.";
 
   return (
     <section className="panel rail-panel">
       <div className="panel-header">
         <div>
           <h2>Node Selection</h2>
-          <p className="muted">Search, pick, and prune target nodes before you initialize a new task.</p>
+          <p className="muted">Choose at least one node to initialize a task.</p>
         </div>
         <button className="secondary" type="button" onClick={onRefreshNodes} disabled={isRefreshingNodes}>
           {isRefreshingNodes ? "Refreshing..." : "Refresh SSH Nodes"}
         </button>
       </div>
 
-      <div className="panel-body rail-layout">
+      <div className="panel-body rail-layout node-selection-layout">
         <label>
           <span>Search Nodes</span>
           <input
@@ -50,16 +48,9 @@ export function NodeSelectionRail({
           />
         </label>
 
-        <div className="summary-card">
+        <div className="summary-card selection-summary-card selection-summary-inline">
           <span className="section-label">Selection</span>
-          <strong>{selectedNodeSummary}</strong>
-          <div className="token-row">
-            {selectedNodes.map((node) => (
-              <button key={node.id} type="button" className="token" onClick={() => onRemoveNode(node.id)}>
-                {node.host_alias}
-              </button>
-            ))}
-          </div>
+          <strong className="selection-line">{selectedNodeSummary}</strong>
         </div>
 
         <div className="scroll-card rail-scroll-list">

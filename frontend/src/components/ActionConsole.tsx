@@ -74,10 +74,11 @@ export function ActionConsole({
       <div className="panel-header">
         <div>
           <h2>Action Console</h2>
-          <p className="muted">{summarizeTask(currentTask)}</p>
         </div>
         {currentMode === "proposal" ? (
-          <span className="signal">{currentTaskProposals.length} pending in this task</span>
+          <p className="panel-meta">
+            <strong>{currentTaskProposals.length}</strong> pending in this task
+          </p>
         ) : null}
       </div>
 

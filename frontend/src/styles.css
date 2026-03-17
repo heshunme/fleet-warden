@@ -173,6 +173,14 @@ h3 {
   gap: 0.55rem;
 }
 
+.button-row {
+  align-items: flex-start;
+}
+
+.tab-strip {
+  align-items: flex-start;
+}
+
 .signal,
 .pill,
 .token,
@@ -252,7 +260,7 @@ h3 {
 .workspace-grid {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(240px, 19%) minmax(560px, 55%) minmax(300px, 26%);
+  grid-template-columns: minmax(300px, 24%) minmax(500px, 48%) minmax(300px, 28%);
   gap: 0.9rem;
 }
 
@@ -262,11 +270,14 @@ h3 {
 
 .column {
   min-height: 0;
+  min-width: 0;
   display: grid;
 }
 
 .panel {
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   padding: 1rem;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -285,6 +296,19 @@ h3 {
   justify-content: space-between;
   gap: 0.8rem;
   align-items: flex-start;
+}
+
+.panel-header > div,
+.compact-header > div,
+.card-header > div {
+  min-width: 0;
+}
+
+.panel-header .pill {
+  max-width: 14rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .compact-header {
@@ -314,16 +338,30 @@ h3 {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.node-selection-layout {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
 .summary-rail-layout {
   align-content: start;
   grid-auto-rows: min-content;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable both-edges;
 }
 
 .rail-content {
   align-content: start;
   grid-auto-rows: min-content;
   overflow: auto;
+}
+
+.rail-panel .panel-header {
+  flex-wrap: wrap;
+}
+
+.rail-panel .panel-header .pill {
+  max-width: 100%;
 }
 
 .create-layout {
@@ -360,6 +398,26 @@ h3 {
   min-height: 0;
 }
 
+.selection-summary-card {
+  position: relative;
+  z-index: 1;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.selection-summary-inline {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  padding-top: 0.65rem;
+  padding-bottom: 0.65rem;
+}
+
+.selection-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .section-label {
   font-size: 0.75rem;
   letter-spacing: 0.08em;
@@ -369,6 +427,18 @@ h3 {
 
 .muted {
   color: rgba(24, 51, 68, 0.68);
+}
+
+.panel-meta {
+  margin: 0;
+  font-size: 0.95rem;
+  color: rgba(24, 51, 68, 0.72);
+  text-align: right;
+}
+
+.panel-meta strong {
+  color: #0d5c63;
+  font-weight: 600;
 }
 
 .clamp-2,
@@ -586,6 +656,8 @@ h3 {
   overflow: auto;
   display: grid;
   gap: 0.85rem;
+  align-content: start;
+  grid-auto-rows: min-content;
 }
 
 .drawer-section {
@@ -598,7 +670,7 @@ h3 {
   }
 
   .workspace-grid {
-    grid-template-columns: minmax(220px, 18%) minmax(460px, 54%) minmax(280px, 28%);
+    grid-template-columns: minmax(280px, 22%) minmax(420px, 50%) minmax(280px, 28%);
   }
 
   .workspace-grid-create {
