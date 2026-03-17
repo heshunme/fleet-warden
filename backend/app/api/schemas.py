@@ -97,6 +97,9 @@ class ApprovalRead(BaseModel):
 class ProposalRead(BaseModel):
     id: int
     round_id: int
+    task_id: int | None = None
+    task_node_id: int | None = None
+    node_label: str | None = None
     proposal_type: str
     summary: str
     todo_delta: list[str]
@@ -182,4 +185,3 @@ class EventRead(BaseModel):
     payload: dict
     operator_id: str
     created_at: str | None
-

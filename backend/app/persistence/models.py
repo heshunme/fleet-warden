@@ -150,6 +150,24 @@ class Proposal(Base):
     approvals: Mapped[list["Approval"]] = relationship(back_populates="proposal")
     execution_results: Mapped[list["ExecutionResult"]] = relationship(back_populates="proposal")
 
+    @property
+    def task_node_id(self) -> int | None:
+        return self.round.task_node_id if self.round else None
+
+    @property
+    def task_id(self) -> int | None:
+        round_obj = self.round
+        if not round_obj or not round_obj.task_node:
+            return None
+        return round_obj.task_node.task_id
+
+    @property
+    def node_label(self) -> str | None:
+        round_obj = self.round
+        if not round_obj or not round_obj.task_node or not round_obj.task_node.node:
+            return None
+        return round_obj.task_node.node.host_alias
+
 
 class Approval(Base):
     __tablename__ = "approvals"
@@ -193,4 +211,3 @@ class AuditLog(Base):
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     operator_id: Mapped[str] = mapped_column(String(255), default="operator")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-

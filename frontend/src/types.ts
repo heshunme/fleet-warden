@@ -55,6 +55,9 @@ export interface ExecutionResultRecord {
 export interface ProposalRecord {
   id: number;
   round_id: number;
+  task_id: number | null;
+  task_node_id: number | null;
+  node_label: string | null;
   proposal_type: string;
   summary: string;
   todo_delta: string[];
@@ -131,4 +134,3 @@ export interface EventRecord {
   operator_id: string;
   created_at: string | null;
 }
-
