@@ -48,7 +48,15 @@ class SSHCommandExecutor(Executor):
         settings = get_settings()
         target = getattr(node, "host_alias", None)
         used_alias = bool(target)
-        ssh_command = ["ssh", "-F", settings.ssh_config_path]
+        ssh_command = [
+            "ssh",
+            "-F",
+            settings.ssh_config_path,
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+        ]
         if used_alias:
             ssh_command.append(target)
         else:
@@ -67,6 +75,7 @@ class SSHCommandExecutor(Executor):
                 capture_output=True,
                 text=True,
                 check=False,
+                stdin=subprocess.DEVNULL,
                 timeout=settings.ssh_command_timeout_seconds,
             )
         except FileNotFoundError:

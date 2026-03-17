@@ -41,15 +41,22 @@ def test_ssh_executor_uses_system_ssh_first(monkeypatch) -> None:
 
     monkeypatch.setattr(ssh_command_module, "get_settings", lambda: _settings())
     monkeypatch.setattr(ssh_command_module.shutil, "which", lambda _: "/usr/bin/ssh")
-    monkeypatch.setattr(
-        ssh_command_module.subprocess,
-        "run",
-        lambda args, **kwargs: subprocess.CompletedProcess(
+    captured_args = {}
+
+    def run(args, **kwargs):
+        captured_args["args"] = args
+        captured_args["kwargs"] = kwargs
+        return subprocess.CompletedProcess(
             args=args,
             returncode=0,
             stdout="hello\n",
             stderr="",
-        ),
+        )
+
+    monkeypatch.setattr(
+        ssh_command_module.subprocess,
+        "run",
+        run,
     )
 
     executor = SSHCommandExecutor()
@@ -60,6 +67,17 @@ def test_ssh_executor_uses_system_ssh_first(monkeypatch) -> None:
     assert result.structured_output["transport"] == "system_ssh"
     assert result.structured_output["target"] == "web-1"
     assert result.structured_output["used_alias"] is True
+    assert captured_args["args"][:8] == [
+        "ssh",
+        "-F",
+        "/tmp/test-ssh-config",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "web-1",
+    ]
+    assert captured_args["kwargs"]["stdin"] is subprocess.DEVNULL
 
 
 def test_ssh_executor_falls_back_to_asyncssh_on_system_config_error(monkeypatch) -> None:
