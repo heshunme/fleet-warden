@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { approveTaskSpec, fetchTaskSpec, rejectTaskSpec } from "../lib/api";
+import { canApproveTaskSpec, canRejectTaskSpec } from "../lib/guards";
 import type { TaskRecord, TaskSpecRecord } from "../types";
 import { SectionCard } from "../components/SectionCard";
 
@@ -12,6 +13,7 @@ interface TaskSpecPageProps {
 export function TaskSpecPage({ task, onTaskUpdated }: TaskSpecPageProps) {
   const [taskSpec, setTaskSpec] = useState<TaskSpecRecord | null>(null);
   const [draftGoal, setDraftGoal] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (!task) {
@@ -41,22 +43,45 @@ export function TaskSpecPage({ task, onTaskUpdated }: TaskSpecPageProps) {
   }
 
   const approve = async () => {
-    const updated = await approveTaskSpec(task.id, { goal: draftGoal });
-    onTaskUpdated(updated);
+    setIsSubmitting(true);
+    try {
+      const updated = await approveTaskSpec(task.id, { goal: draftGoal });
+      onTaskUpdated(updated);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const reject = async () => {
-    const updated = await rejectTaskSpec(task.id, "Rejected from UI");
-    onTaskUpdated(updated);
+    setIsSubmitting(true);
+    try {
+      const updated = await rejectTaskSpec(task.id, "Rejected from UI");
+      onTaskUpdated(updated);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  const canApprove = canApproveTaskSpec(task) && !isSubmitting;
+  const canReject = canRejectTaskSpec(task) && !isSubmitting;
 
   return (
     <SectionCard title="TaskSpec Approval">
       <div className="stack">
         <label>
           <span>Goal</span>
-          <textarea rows={3} value={draftGoal} onChange={(event) => setDraftGoal(event.target.value)} />
+          <textarea
+            rows={3}
+            value={draftGoal}
+            onChange={(event) => setDraftGoal(event.target.value)}
+            disabled={!canApprove}
+          />
         </label>
+        {!canApproveTaskSpec(task) || !canRejectTaskSpec(task) ? (
+          <p className="muted">
+            TaskSpec actions are only available before execution starts. Rejected or cancelled tasks cannot be re-approved.
+          </p>
+        ) : null}
         <div className="badge-row">
           {taskSpec.allowed_action_types.map((item) => (
             <span key={item} className="badge">{item}</span>
@@ -83,11 +108,10 @@ export function TaskSpecPage({ task, onTaskUpdated }: TaskSpecPageProps) {
           </div>
         </div>
         <div className="button-row">
-          <button onClick={approve} type="button">Approve TaskSpec</button>
-          <button className="secondary" onClick={reject} type="button">Reject</button>
+          <button onClick={approve} type="button" disabled={!canApprove}>Approve TaskSpec</button>
+          <button className="secondary" onClick={reject} type="button" disabled={!canReject}>Reject</button>
         </div>
       </div>
     </SectionCard>
   );
 }
-

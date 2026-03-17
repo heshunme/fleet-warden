@@ -1,4 +1,7 @@
+import { useState } from "react";
+
 import { cancelTask, pauseTask, resumeTask } from "../lib/api";
+import { canCancelTask, canPauseTask, canResumeTask } from "../lib/guards";
 import type { EventRecord, TaskRecord } from "../types";
 import { SectionCard } from "../components/SectionCard";
 
@@ -10,6 +13,8 @@ interface TaskOverviewPageProps {
 }
 
 export function TaskOverviewPage({ task, events, onTaskUpdated, onSelectTaskNode }: TaskOverviewPageProps) {
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+
   if (!task) {
     return (
       <SectionCard title="Task Overview">
@@ -22,19 +27,52 @@ export function TaskOverviewPage({ task, events, onTaskUpdated, onSelectTaskNode
     accumulator[node.status] = (accumulator[node.status] ?? 0) + 1;
     return accumulator;
   }, {});
+  const pauseDisabled = !canPauseTask(task) || busyAction !== null;
+  const resumeDisabled = !canResumeTask(task) || busyAction !== null;
+  const cancelDisabled = !canCancelTask(task) || busyAction !== null;
+
+  const runTaskAction = async (action: "pause" | "resume" | "cancel") => {
+    setBusyAction(action);
+    try {
+      if (action === "pause") {
+        onTaskUpdated(await pauseTask(task.id));
+      } else if (action === "resume") {
+        onTaskUpdated(await resumeTask(task.id));
+      } else {
+        onTaskUpdated(await cancelTask(task.id));
+      }
+    } finally {
+      setBusyAction(null);
+    }
+  };
 
   return (
     <SectionCard
       title="Task Overview"
       action={
         <div className="button-row">
-          <button className="secondary" onClick={async () => onTaskUpdated(await pauseTask(task.id))} type="button">
+          <button
+            className="secondary"
+            onClick={() => runTaskAction("pause")}
+            type="button"
+            disabled={pauseDisabled}
+          >
             Pause
           </button>
-          <button className="secondary" onClick={async () => onTaskUpdated(await resumeTask(task.id))} type="button">
+          <button
+            className="secondary"
+            onClick={() => runTaskAction("resume")}
+            type="button"
+            disabled={resumeDisabled}
+          >
             Resume
           </button>
-          <button className="danger" onClick={async () => onTaskUpdated(await cancelTask(task.id))} type="button">
+          <button
+            className="danger"
+            onClick={() => runTaskAction("cancel")}
+            type="button"
+            disabled={cancelDisabled}
+          >
             Cancel
           </button>
         </div>
@@ -55,6 +93,9 @@ export function TaskOverviewPage({ task, events, onTaskUpdated, onSelectTaskNode
               </span>
             ))}
           </div>
+          <p className="muted">
+            Pause is only available while a task is waiting for TaskSpec approval or actively running. Resume only works from paused, and cancel is disabled once a task is terminal.
+          </p>
           <table>
             <thead>
               <tr>
@@ -92,4 +133,3 @@ export function TaskOverviewPage({ task, events, onTaskUpdated, onSelectTaskNode
     </SectionCard>
   );
 }
-

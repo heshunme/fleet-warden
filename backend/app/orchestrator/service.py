@@ -9,47 +9,18 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.agents.initializer import InitializerAgent
 from app.agents.node_agent import NodeAgent
-from app.domain.enums import (
-    ApprovalDecision,
-    AuditEventType,
-    ProposalType,
-    RoundStatus,
-    TaskMode,
-    TaskNodeStatus,
-    TaskStatus,
-)
-from app.domain.state_machine import aggregate_task_status, is_tasknode_terminal
+from app.domain.enums import AuditEventType, TaskMode, TaskNodeStatus
 from app.executors.remote_agent import RemoteCodingAgentExecutor
 from app.executors.ssh_command import SSHCommandExecutor
-from app.infra.audit import record_audit
 from app.infra.ssh_config import discover_ssh_hosts
-from app.persistence.models import (
-    Approval,
-    ExecutionResult,
-    Node,
-    NodeAgentState,
-    Proposal,
-    Round,
-    Task,
-    TaskNode,
-    TaskSpec,
-)
+from app.orchestrator.audit_service import AuditService
+from app.orchestrator.commands import ProposalCommandService, TaskCommandService
+from app.orchestrator.errors import InvalidInputError, InvalidTaskStateError, ResourceNotFoundError
+from app.persistence.models import Node, Proposal, Round, Task, TaskNode, TaskSpec
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
-
-class ResourceNotFoundError(LookupError):
-    pass
-
-
-class InvalidTaskStateError(ValueError):
-    pass
-
-
-class InvalidInputError(ValueError):
-    pass
 
 
 class OrchestratorService:
@@ -59,6 +30,15 @@ class OrchestratorService:
         self.node_agent = NodeAgent()
         self.command_executor = SSHCommandExecutor()
         self.remote_executor = RemoteCodingAgentExecutor()
+        self.audit_service = AuditService(db)
+        self.task_commands = TaskCommandService(db, self.initializer, self.audit_service)
+        self.proposal_commands = ProposalCommandService(
+            db,
+            self.node_agent,
+            self.command_executor,
+            self.remote_executor,
+            self.audit_service,
+        )
 
     def refresh_nodes(self, ssh_config_path: str) -> list[Node]:
         discovered = discover_ssh_hosts(ssh_config_path)
@@ -82,13 +62,7 @@ class OrchestratorService:
             node.last_seen_at = utcnow()
             updated_nodes.append(node)
         self.db.flush()
-        record_audit(
-            self.db,
-            entity_type="node",
-            entity_id=0,
-            event_type=AuditEventType.NODES_REFRESHED,
-            payload={"count": len(updated_nodes)},
-        )
+        self.audit_service.nodes_refreshed(count=len(updated_nodes))
         self.db.commit()
         return updated_nodes
 
@@ -102,137 +76,27 @@ class OrchestratorService:
         created_by: str = "operator",
         max_rounds_per_node: int = 3,
     ) -> Task:
-        unique_node_ids = list(dict.fromkeys(node_ids))
-        self._ensure_nodes_exist(unique_node_ids)
-        task = Task(
+        task = self.task_commands.create_task(
             title=title,
-            mode=mode.value,
+            mode=mode,
             user_input=user_input,
-            status=TaskStatus.INITIALIZING.value,
+            node_ids=node_ids,
             created_by=created_by,
             max_rounds_per_node=max_rounds_per_node,
         )
-        self.db.add(task)
-        self.db.flush()
-        record_audit(
-            self.db,
-            entity_type="task",
-            entity_id=task.id,
-            event_type=AuditEventType.TASK_CREATED,
-            payload={"mode": mode.value, "node_ids": unique_node_ids},
-            operator_id=created_by,
-        )
-        draft = self.initializer.generate(user_input=user_input, mode=mode)
-        task_spec = TaskSpec(
-            task_id=task.id,
-            goal=draft.goal,
-            constraints=draft.constraints,
-            success_criteria=draft.success_criteria,
-            risk_notes=draft.risk_notes,
-            allowed_action_types=draft.allowed_action_types,
-            disallowed_action_types=draft.disallowed_action_types,
-            initial_todo_template=draft.initial_todo_template,
-            operator_notes=draft.operator_notes,
-            version=1,
-        )
-        self.db.add(task_spec)
-        task.status = TaskStatus.AWAITING_TASKSPEC_APPROVAL.value
-        task.auto_pause_on_risk = True
-        self.db.flush()
-        record_audit(
-            self.db,
-            entity_type="task",
-            entity_id=task.id,
-            event_type=AuditEventType.TASKSPEC_GENERATED,
-            payload={"task_spec_id": task_spec.id},
-            operator_id=created_by,
-        )
-        for node_id in unique_node_ids:
-            task_node = TaskNode(task_id=task.id, node_id=node_id, status=TaskNodeStatus.PENDING.value)
-            self.db.add(task_node)
         self.db.commit()
         return self.get_task(task.id)
 
     def approve_taskspec(self, task_id: int, edited_fields: dict[str, Any] | None, approved_by: str = "operator") -> Task:
         task = self.get_task(task_id)
-        if task.status != TaskStatus.AWAITING_TASKSPEC_APPROVAL.value:
-            raise InvalidTaskStateError(
-                f"Task {task.id} is {task.status}; expected {TaskStatus.AWAITING_TASKSPEC_APPROVAL.value}."
-            )
-        if task.approved_task_spec_id is not None:
-            raise InvalidTaskStateError("TaskSpec has already been approved.")
         task_spec = self.get_latest_taskspec(task_id)
-        if edited_fields:
-            for key, value in edited_fields.items():
-                if hasattr(task_spec, key):
-                    setattr(task_spec, key, value)
-        task_spec.approved_by = approved_by
-        task_spec.approved_at = utcnow()
-        task.approved_task_spec_id = task_spec.id
-        task.status = TaskStatus.RUNNING.value
-        for task_node in task.task_nodes:
-            task_node.status = TaskNodeStatus.AWAITING_PROPOSAL.value
-            if task_node.agent_state is None:
-                state = NodeAgentState(
-                    task_node_id=task_node.id,
-                    task_spec_snapshot={
-                        "goal": task_spec.goal,
-                        "success_criteria": task_spec.success_criteria,
-                        "constraints": task_spec.constraints,
-                    },
-                    node_profile={"host_alias": task_node.node.host_alias, "hostname": task_node.node.hostname},
-                    round_index=0,
-                    todo_items=list(task_spec.initial_todo_template),
-                    observations=[],
-                    attempted_actions=[],
-                    success_assessment=None,
-                    status="active",
-                    snapshot_blob={"todo_items": list(task_spec.initial_todo_template)},
-                )
-                self.db.add(state)
-            record_audit(
-                self.db,
-                entity_type="task_node",
-                entity_id=task_node.id,
-                event_type=AuditEventType.TASKNODE_STATUS_CHANGED,
-                payload={"status": task_node.status},
-                operator_id=approved_by,
-            )
-        record_audit(
-            self.db,
-            entity_type="task",
-            entity_id=task.id,
-            event_type=AuditEventType.TASKSPEC_APPROVED,
-            payload={"task_spec_id": task_spec.id},
-            operator_id=approved_by,
-        )
+        self.task_commands.approve_taskspec(task, task_spec, edited_fields=edited_fields, approved_by=approved_by)
         self.db.commit()
         return self.get_task(task.id)
 
     def reject_taskspec(self, task_id: int, comment: str | None, approved_by: str = "operator") -> Task:
         task = self.get_task(task_id)
-        if task.approved_task_spec_id is not None:
-            raise InvalidTaskStateError("TaskSpec can only be rejected before it is approved.")
-        task.status = TaskStatus.CANCELLED.value
-        for task_node in task.task_nodes:
-            if not is_tasknode_terminal(TaskNodeStatus(task_node.status)):
-                task_node.status = TaskNodeStatus.CANCELLED.value
-                record_audit(
-                    self.db,
-                    entity_type="task_node",
-                    entity_id=task_node.id,
-                    event_type=AuditEventType.TASKNODE_STATUS_CHANGED,
-                    payload={"status": task_node.status},
-                    operator_id=approved_by,
-                )
-        record_audit(
-            self.db,
-            entity_type="task",
-            entity_id=task.id,
-            event_type=AuditEventType.TASKSPEC_REJECTED,
-            payload={"comment": comment},
-            operator_id=approved_by,
-        )
+        self.task_commands.reject_taskspec(task, comment=comment, approved_by=approved_by)
         self.db.commit()
         return self.get_task(task.id)
 
@@ -334,65 +198,10 @@ class OrchestratorService:
         ).scalars().all()
         processed = 0
         for task_node in waiting_nodes:
-            self._create_proposal_for_task_node(task_node)
+            self.proposal_commands.create_proposal_for_task_node(task_node)
             processed += 1
         self.db.commit()
         return processed
-
-    def _create_proposal_for_task_node(self, task_node: TaskNode) -> Proposal:
-        state = task_node.agent_state
-        if state is None:
-            raise ValueError("Task node is missing agent state")
-        round_index = state.round_index + 1
-        round_record = Round(
-            task_node_id=task_node.id,
-            index=round_index,
-            status=RoundStatus.PROPOSAL_READY.value,
-            started_at=utcnow(),
-        )
-        self.db.add(round_record)
-        draft = self.node_agent.generate_proposal(
-            mode=TaskMode(task_node.task.mode),
-            node_name=task_node.node.host_alias,
-            round_index=round_index,
-            todo_items=list(state.todo_items),
-        )
-        proposal = Proposal(
-            round=round_record,
-            proposal_type=draft.proposal_type.value,
-            summary=draft.summary,
-            todo_delta=draft.updated_todo,
-            rationale=draft.rationale,
-            risk_level=draft.risk_level.value,
-            content=draft.content,
-            editable_content=draft.editable_content,
-            success_hypothesis=draft.success_hypothesis,
-            needs_user_input=draft.needs_user_input,
-            status="pending",
-        )
-        self.db.add(proposal)
-        self.db.flush()
-        task_node.status = TaskNodeStatus.AWAITING_APPROVAL.value
-        task_node.current_round = round_index
-        state.round_index = round_index
-        state.last_proposal_id = proposal.id
-        state.todo_items = list(draft.updated_todo)
-        state.snapshot_blob = {"todo_items": list(draft.updated_todo), "round_index": round_index}
-        record_audit(
-            self.db,
-            entity_type="proposal",
-            entity_id=proposal.id,
-            event_type=AuditEventType.PROPOSAL_CREATED,
-            payload={"task_node_id": task_node.id, "round_index": round_index},
-        )
-        record_audit(
-            self.db,
-            entity_type="task_node",
-            entity_id=task_node.id,
-            event_type=AuditEventType.TASKNODE_STATUS_CHANGED,
-            payload={"status": task_node.status},
-        )
-        return proposal
 
     def approve_proposal(
         self,
@@ -403,210 +212,42 @@ class OrchestratorService:
         approved_by: str = "operator",
     ) -> Proposal:
         proposal = self.get_proposal(proposal_id)
-        task_node = self._require_proposal_pending_and_awaiting_approval(proposal)
-        round_record = proposal.round
-        approval = Approval(
-            proposal_id=proposal.id,
-            decision=(
-                ApprovalDecision.EDITED_AND_APPROVED.value
-                if edited_content
-                else ApprovalDecision.APPROVED.value
-            ),
+        self.proposal_commands.approve_proposal(
+            proposal,
             edited_content=edited_content,
             comment=comment,
             approved_by=approved_by,
         )
-        final_content = edited_content or proposal.editable_content or proposal.content
-        self.db.add(approval)
-        proposal.status = "approved"
-        round_record.status = RoundStatus.APPROVED.value
-        task_node.status = TaskNodeStatus.EXECUTING.value
-        record_audit(
-            self.db,
-            entity_type="proposal",
-            entity_id=proposal.id,
-            event_type=AuditEventType.PROPOSAL_APPROVED,
-            payload={"decision": approval.decision},
-            operator_id=approved_by,
-        )
-        if proposal.proposal_type == ProposalType.SHELL_COMMAND.value:
-            result = self.command_executor.execute(node=task_node.node, content=final_content)
-        else:
-            result = self.remote_executor.execute(node=task_node.node, content=final_content)
-        execution_result = ExecutionResult(
-            proposal_id=proposal.id,
-            executor_type=result.executor_type,
-            exit_code=result.exit_code,
-            stdout=result.stdout,
-            stderr=result.stderr,
-            structured_output=result.structured_output,
-            execution_summary=result.execution_summary,
-            started_at=result.started_at,
-            ended_at=result.ended_at,
-            is_action_successful=result.is_action_successful,
-        )
-        self.db.add(execution_result)
-        self.db.flush()
-        task_node.status = TaskNodeStatus.EVALUATING.value
-        task_node.last_result_at = result.ended_at
-        if task_node.agent_state:
-            task_node.agent_state.last_result_id = execution_result.id
-            task_node.agent_state.attempted_actions = [
-                *task_node.agent_state.attempted_actions,
-                {"proposal_id": proposal.id, "summary": proposal.summary},
-            ]
-        evaluation = self.node_agent.evaluate_result(
-            round_index=task_node.current_round,
-            max_rounds=task_node.task.max_rounds_per_node,
-            execution_succeeded=result.is_action_successful,
-            stdout=result.stdout,
-            todo_items=list(task_node.agent_state.todo_items if task_node.agent_state else []),
-        )
-        task_node.status = evaluation.next_status.value
-        task_node.success_summary = evaluation.success_summary
-        task_node.failure_summary = evaluation.failure_summary
-        task_node.needs_user_input = False
-        if task_node.agent_state:
-            task_node.agent_state.todo_items = list(evaluation.updated_todo)
-            task_node.agent_state.success_assessment = evaluation.success_summary or evaluation.failure_summary
-            task_node.agent_state.snapshot_blob = {
-                "todo_items": list(evaluation.updated_todo),
-                "assessment": task_node.agent_state.success_assessment,
-            }
-        round_record.status = RoundStatus.COMPLETED.value
-        round_record.ended_at = result.ended_at
-        record_audit(
-            self.db,
-            entity_type="execution_result",
-            entity_id=execution_result.id,
-            event_type=AuditEventType.EXECUTION_COMPLETED,
-            payload={"executor_type": result.executor_type, "success": result.is_action_successful},
-            operator_id=approved_by,
-        )
-        record_audit(
-            self.db,
-            entity_type="task_node",
-            entity_id=task_node.id,
-            event_type=AuditEventType.TASKNODE_STATUS_CHANGED,
-            payload={"status": task_node.status},
-            operator_id=approved_by,
-        )
-        self._recompute_task_status(task_node.task)
         self.db.commit()
         return self.get_proposal(proposal_id)
 
     def reject_proposal(self, proposal_id: int, comment: str | None, approved_by: str = "operator") -> Proposal:
         proposal = self.get_proposal(proposal_id)
-        task_node = self._require_proposal_pending_and_awaiting_approval(proposal)
-        proposal.status = "rejected"
-        proposal.round.status = RoundStatus.REJECTED.value
-        proposal.round.ended_at = utcnow()
-        task_node.status = TaskNodeStatus.BLOCKED.value
-        task_node.failure_summary = comment or "Proposal rejected by operator."
-        approval = Approval(
-            proposal_id=proposal.id,
-            decision=ApprovalDecision.REJECTED.value,
-            edited_content=None,
-            comment=comment,
-            approved_by=approved_by,
-        )
-        self.db.add(approval)
-        record_audit(
-            self.db,
-            entity_type="proposal",
-            entity_id=proposal.id,
-            event_type=AuditEventType.PROPOSAL_REJECTED,
-            payload={"comment": comment},
-            operator_id=approved_by,
-        )
-        record_audit(
-            self.db,
-            entity_type="task_node",
-            entity_id=task_node.id,
-            event_type=AuditEventType.TASKNODE_STATUS_CHANGED,
-            payload={"status": task_node.status},
-            operator_id=approved_by,
-        )
-        self._recompute_task_status(task_node.task)
+        self.proposal_commands.reject_proposal(proposal, comment=comment, approved_by=approved_by)
         self.db.commit()
         return self.get_proposal(proposal_id)
 
     def pause_node_for_proposal(self, proposal_id: int, comment: str | None, approved_by: str = "operator") -> Proposal:
         proposal = self.get_proposal(proposal_id)
-        task_node = self._require_proposal_pending_and_awaiting_approval(proposal)
-        proposal.status = "paused"
-        proposal.round.status = RoundStatus.ABORTED.value
-        proposal.round.ended_at = utcnow()
-        task_node.status = TaskNodeStatus.PAUSED.value
-        approval = Approval(
-            proposal_id=proposal.id,
-            decision=ApprovalDecision.PAUSED.value,
-            edited_content=None,
-            comment=comment,
-            approved_by=approved_by,
-        )
-        self.db.add(approval)
-        record_audit(
-            self.db,
-            entity_type="proposal",
-            entity_id=proposal.id,
-            event_type=AuditEventType.PROPOSAL_PAUSED,
-            payload={"comment": comment},
-            operator_id=approved_by,
-        )
-        self._recompute_task_status(task_node.task)
+        self.proposal_commands.pause_node_for_proposal(proposal, comment=comment, approved_by=approved_by)
         self.db.commit()
         return self.get_proposal(proposal_id)
 
     def pause_task(self, task_id: int) -> Task:
         task = self.get_task(task_id)
-        task.status = TaskStatus.PAUSED.value
-        for task_node in task.task_nodes:
-            if not is_tasknode_terminal(TaskNodeStatus(task_node.status)):
-                task_node.status = TaskNodeStatus.PAUSED.value
-        record_audit(
-            self.db,
-            entity_type="task",
-            entity_id=task.id,
-            event_type=AuditEventType.TASK_STATUS_CHANGED,
-            payload={"status": task.status},
-        )
+        self.task_commands.pause_task(task)
         self.db.commit()
         return self.get_task(task.id)
 
     def resume_task(self, task_id: int) -> Task:
         task = self.get_task(task_id)
-        if task.status != TaskStatus.PAUSED.value:
-            raise InvalidTaskStateError(
-                f"Task {task.id} is {task.status}; expected {TaskStatus.PAUSED.value}."
-            )
-        for task_node in task.task_nodes:
-            if task_node.status == TaskNodeStatus.PAUSED.value:
-                task_node.status = self._resume_status_for_task_node(task_node).value
-        task.status = self._resume_status_for_task(task).value
-        record_audit(
-            self.db,
-            entity_type="task",
-            entity_id=task.id,
-            event_type=AuditEventType.TASK_STATUS_CHANGED,
-            payload={"status": task.status},
-        )
+        self.task_commands.resume_task(task)
         self.db.commit()
         return self.get_task(task.id)
 
     def cancel_task(self, task_id: int) -> Task:
         task = self.get_task(task_id)
-        task.status = TaskStatus.CANCELLED.value
-        for task_node in task.task_nodes:
-            if not is_tasknode_terminal(TaskNodeStatus(task_node.status)):
-                task_node.status = TaskNodeStatus.CANCELLED.value
-        record_audit(
-            self.db,
-            entity_type="task",
-            entity_id=task.id,
-            event_type=AuditEventType.TASK_STATUS_CHANGED,
-            payload={"status": task.status},
-        )
+        self.task_commands.cancel_task(task)
         self.db.commit()
         return self.get_task(task.id)
 
@@ -616,27 +257,12 @@ class OrchestratorService:
             .where(TaskNode.status == TaskNodeStatus.EXECUTING.value)
             .options(selectinload(TaskNode.task).selectinload(Task.task_nodes))
         ).scalars().all()
-        affected_tasks: dict[int, Task] = {}
-        for task_node in task_nodes:
-            task_node.status = TaskNodeStatus.BLOCKED.value
-            task_node.failure_summary = "Worker restart detected during execution. Operator must resume or cancel."
-            affected_tasks[task_node.task.id] = task_node.task
-            record_audit(
-                self.db,
-                entity_type="task_node",
-                entity_id=task_node.id,
-                event_type=AuditEventType.TASKNODE_STATUS_CHANGED,
-                payload={"status": task_node.status, "reason": "worker_restart"},
-            )
-        for task in affected_tasks.values():
-            self._recompute_task_status(task)
+        recovered = self.task_commands.recover_executing_nodes(task_nodes)
         self.db.commit()
-        return len(task_nodes)
+        return recovered
 
     def list_events_for_task(self, task_id: int, after_id: int = 0) -> list[dict]:
-        rows = self.db.execute(
-            select(TaskNode.id).where(TaskNode.task_id == task_id)
-        ).scalars().all()
+        rows = self.db.execute(select(TaskNode.id).where(TaskNode.task_id == task_id)).scalars().all()
         audits = self.db.execute(
             select(self._audit_model())
             .where(
@@ -667,39 +293,6 @@ class OrchestratorService:
         ).scalars().all()
         return [self._audit_to_dict(audit) for audit in audits]
 
-    def _recompute_task_status(self, task: Task) -> None:
-        statuses = [TaskNodeStatus(task_node.status) for task_node in task.task_nodes]
-        task.status = aggregate_task_status(statuses, paused=task.status == TaskStatus.PAUSED.value).value
-        record_audit(
-            self.db,
-            entity_type="task",
-            entity_id=task.id,
-            event_type=AuditEventType.TASK_STATUS_CHANGED,
-            payload={"status": task.status},
-        )
-
-    def _resume_status_for_task_node(self, task_node: TaskNode) -> TaskNodeStatus:
-        if task_node.task.approved_task_spec_id is None:
-            return TaskNodeStatus.PENDING
-        has_pending_proposal = self.db.execute(
-            select(Proposal.id)
-            .join(Round)
-            .where(
-                Round.task_node_id == task_node.id,
-                Proposal.status == "pending",
-            )
-            .limit(1)
-        ).scalar_one_or_none()
-        if has_pending_proposal is not None:
-            return TaskNodeStatus.AWAITING_APPROVAL
-        return TaskNodeStatus.AWAITING_PROPOSAL
-
-    def _resume_status_for_task(self, task: Task) -> TaskStatus:
-        if task.approved_task_spec_id is None:
-            return TaskStatus.AWAITING_TASKSPEC_APPROVAL
-        statuses = [TaskNodeStatus(task_node.status) for task_node in task.task_nodes]
-        return aggregate_task_status(statuses)
-
     @staticmethod
     def _audit_model():
         from app.persistence.models import AuditLog
@@ -723,24 +316,3 @@ class OrchestratorService:
             return self.db.execute(statement).scalar_one()
         except NoResultFound as exc:
             raise ResourceNotFoundError(f"{resource_name} not found") from exc
-
-    def _ensure_nodes_exist(self, node_ids: list[int]) -> None:
-        unique_node_ids = list(dict.fromkeys(node_ids))
-        existing_node_ids = set(
-            self.db.execute(select(Node.id).where(Node.id.in_(unique_node_ids))).scalars().all()
-        )
-        missing_ids = [node_id for node_id in unique_node_ids if node_id not in existing_node_ids]
-        if missing_ids:
-            raise InvalidInputError(f"Unknown node ids: {missing_ids}")
-
-    def _require_proposal_pending_and_awaiting_approval(self, proposal: Proposal) -> TaskNode:
-        task_node = proposal.round.task_node
-        if proposal.status != "pending":
-            raise InvalidTaskStateError(
-                f"Proposal {proposal.id} is {proposal.status} and cannot be processed."
-            )
-        if task_node.status != TaskNodeStatus.AWAITING_APPROVAL.value:
-            raise InvalidTaskStateError(
-                f"TaskNode {task_node.id} is {task_node.status}; expected {TaskNodeStatus.AWAITING_APPROVAL.value}."
-            )
-        return task_node
