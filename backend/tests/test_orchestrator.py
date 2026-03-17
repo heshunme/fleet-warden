@@ -286,8 +286,8 @@ def test_refresh_nodes_handles_duplicate_alias_entries(db_session, monkeypatch) 
     service = OrchestratorService(db_session)
 
     monkeypatch.setattr(
-        "app.orchestrator.service.discover_ssh_hosts",
-        lambda _: [
+        "app.orchestrator.service.discover_ssh_hosts_with_fallback",
+        lambda *args, **kwargs: [
             HostEntry(host_alias="dup", hostname="10.0.0.1", user="root", port=22, source="config-a"),
             HostEntry(host_alias="other", hostname="10.0.0.2", user="root", port=22, source="config-a"),
             HostEntry(host_alias="dup", hostname="10.0.0.3", user="ubuntu", port=2222, source="config-b"),
@@ -302,6 +302,40 @@ def test_refresh_nodes_handles_duplicate_alias_entries(db_session, monkeypatch) 
     assert node_by_alias["dup"].hostname == "10.0.0.3"
     assert node_by_alias["dup"].username == "ubuntu"
     assert node_by_alias["dup"].port == 2222
+
+
+def test_refresh_nodes_persists_resolution_warnings(db_session, monkeypatch) -> None:
+    service = OrchestratorService(db_session)
+
+    monkeypatch.setattr(
+        "app.orchestrator.service.discover_ssh_hosts_with_fallback",
+        lambda *args, **kwargs: [
+            HostEntry(
+                host_alias="system-node",
+                hostname="203.0.113.10",
+                user="ubuntu",
+                port=2201,
+                source="config-a",
+                capability_warnings=["Resolved via system ssh."],
+            ),
+            HostEntry(
+                host_alias="fallback-node",
+                hostname="10.0.0.11",
+                user="root",
+                port=22,
+                source="config-b",
+                capability_warnings=["Fallback parser used because ssh -G failed."],
+            ),
+        ],
+    )
+
+    service.refresh_nodes("/tmp/fake-ssh-config")
+    node_by_alias = {node.host_alias: node for node in service.list_nodes()}
+
+    assert node_by_alias["system-node"].ssh_config_source == "config-a"
+    assert node_by_alias["system-node"].capability_warnings == ["Resolved via system ssh."]
+    assert node_by_alias["fallback-node"].ssh_config_source == "config-b"
+    assert node_by_alias["fallback-node"].capability_warnings == ["Fallback parser used because ssh -G failed."]
 
 
 def test_approve_proposal_rejects_non_pending_proposal(db_session, monkeypatch) -> None:

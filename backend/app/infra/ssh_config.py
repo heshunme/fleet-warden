@@ -3,9 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import shlex
+import shutil
+import subprocess
 
 
 SUPPORTED_KEYS = {"host", "hostname", "user", "port", "include"}
+SYSTEM_SSH_RESOLVED_WARNING = "Resolved via system ssh."
 
 
 @dataclass
@@ -16,6 +19,10 @@ class HostEntry:
     port: int = 22
     source: str = ""
     capability_warnings: list[str] = field(default_factory=list)
+    resolution_method: str = "fallback_parser"
+    identity_files: list[str] = field(default_factory=list)
+    proxy_jump: str | None = None
+    proxy_command: str | None = None
 
 
 def _expand_include(value: str, current_file: Path) -> list[Path]:
@@ -112,3 +119,110 @@ def discover_ssh_hosts(config_path: str) -> list[HostEntry]:
             )
         )
     return entries
+
+
+def _parse_ssh_g_output(stdout: str) -> dict[str, list[str]]:
+    resolved: dict[str, list[str]] = {}
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        key, _, value = line.partition(" ")
+        key = key.lower()
+        resolved.setdefault(key, []).append(value.strip())
+    return resolved
+
+
+def _first_value(resolved: dict[str, list[str]], key: str) -> str | None:
+    values = resolved.get(key)
+    return values[0] if values else None
+
+
+def _port_from_value(value: str | None, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _with_fallback_warning(entry: HostEntry, message: str) -> HostEntry:
+    warnings = list(entry.capability_warnings)
+    warnings.append(message)
+    return HostEntry(
+        host_alias=entry.host_alias,
+        hostname=entry.hostname,
+        user=entry.user,
+        port=entry.port,
+        source=entry.source,
+        capability_warnings=warnings,
+        resolution_method="fallback_parser",
+        identity_files=list(entry.identity_files),
+        proxy_jump=entry.proxy_jump,
+        proxy_command=entry.proxy_command,
+    )
+
+
+def _resolve_host_with_system_ssh(entry: HostEntry, config_path: Path) -> HostEntry | None:
+    from app.config import get_settings
+
+    settings = get_settings()
+    try:
+        result = subprocess.run(
+            ["ssh", "-G", "-F", str(config_path), entry.host_alias],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=settings.ssh_command_timeout_seconds,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+
+    resolved = _parse_ssh_g_output(result.stdout)
+    return HostEntry(
+        host_alias=entry.host_alias,
+        hostname=_first_value(resolved, "hostname") or entry.hostname,
+        user=_first_value(resolved, "user") or entry.user,
+        port=_port_from_value(_first_value(resolved, "port"), entry.port),
+        source=entry.source,
+        capability_warnings=[SYSTEM_SSH_RESOLVED_WARNING],
+        resolution_method="system_ssh",
+        identity_files=resolved.get("identityfile", []),
+        proxy_jump=_first_value(resolved, "proxyjump"),
+        proxy_command=_first_value(resolved, "proxycommand"),
+    )
+
+
+def discover_ssh_hosts_with_fallback(
+    config_path: str,
+    *,
+    discovery_mode: str | None = None,
+) -> list[HostEntry]:
+    from app.config import get_settings
+
+    parser_entries = discover_ssh_hosts(config_path)
+    if discovery_mode is None:
+        discovery_mode = get_settings().ssh_discovery_mode
+    if discovery_mode == "parser-only":
+        return parser_entries
+
+    expanded_config_path = Path(config_path).expanduser()
+    if shutil.which("ssh") is None:
+        return [
+            _with_fallback_warning(entry, "Fallback parser used because system ssh is unavailable.")
+            for entry in parser_entries
+        ]
+
+    resolved_entries: list[HostEntry] = []
+    for entry in parser_entries:
+        resolved_entry = _resolve_host_with_system_ssh(entry, expanded_config_path)
+        if resolved_entry is not None:
+            resolved_entries.append(resolved_entry)
+            continue
+        resolved_entries.append(
+            _with_fallback_warning(entry, "Fallback parser used because ssh -G failed.")
+        )
+    return resolved_entries

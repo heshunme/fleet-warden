@@ -1,3 +1,4 @@
+from typing import Literal
 from functools import lru_cache
 from pathlib import Path
 
@@ -19,6 +20,8 @@ class Settings(BaseSettings):
     app_name: str = "FleetWarden"
     database_url: str = DEFAULT_DATABASE_URL
     ssh_config_path: str = str(Path.home() / ".ssh" / "config")
+    ssh_discovery_mode: Literal["system-first", "parser-only"] = "system-first"
+    ssh_execution_mode: Literal["system-first", "asyncssh-only"] = "system-first"
     ssh_command_timeout_seconds: int = 60
     worker_poll_interval_seconds: float = 1.0
     remote_agent_command: str = "codex exec --json"

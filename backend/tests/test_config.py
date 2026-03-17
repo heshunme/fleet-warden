@@ -1,7 +1,7 @@
 from app.config import DEFAULT_DATABASE_URL, Settings
 
 
-def test_settings_load_values_from_env_file(tmp_path) -> None:
+def test_settings_load_values_from_env_file(monkeypatch, tmp_path) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
         "\n".join(
@@ -14,6 +14,7 @@ def test_settings_load_values_from_env_file(tmp_path) -> None:
         encoding="utf-8",
     )
 
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
     settings = Settings(_env_file=env_file)
 
     assert settings.database_url == "sqlite:////tmp/from-env.db"
@@ -25,6 +26,7 @@ def test_environment_variables_override_env_file(monkeypatch, tmp_path) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text("FLEETWARDEN_DATABASE_URL=sqlite:////tmp/from-file.db\n", encoding="utf-8")
     monkeypatch.setenv("FLEETWARDEN_DATABASE_URL", "sqlite:////tmp/from-env-var.db")
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
 
     settings = Settings(_env_file=env_file)
 

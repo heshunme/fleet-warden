@@ -9,10 +9,11 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.agents.initializer import InitializerAgent
 from app.agents.node_agent import NodeAgent
+from app.config import get_settings
 from app.domain.enums import AuditEventType, TaskMode, TaskNodeStatus
 from app.executors.remote_agent import RemoteCodingAgentExecutor
 from app.executors.ssh_command import SSHCommandExecutor
-from app.infra.ssh_config import discover_ssh_hosts
+from app.infra.ssh_config import discover_ssh_hosts_with_fallback
 from app.orchestrator.audit_service import AuditService
 from app.orchestrator.commands import ProposalCommandService, TaskCommandService
 from app.orchestrator.errors import InvalidInputError, InvalidTaskStateError, ResourceNotFoundError
@@ -41,7 +42,10 @@ class OrchestratorService:
         )
 
     def refresh_nodes(self, ssh_config_path: str) -> list[Node]:
-        discovered = discover_ssh_hosts(ssh_config_path)
+        discovered = discover_ssh_hosts_with_fallback(
+            ssh_config_path,
+            discovery_mode=get_settings().ssh_discovery_mode,
+        )
         by_alias = {
             node.host_alias: node
             for node in self.db.execute(select(Node)).scalars().all()
