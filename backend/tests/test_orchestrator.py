@@ -1,7 +1,10 @@
+import json
+import sqlite3
 from datetime import datetime, timezone
 
 import pytest
 
+from app import database
 from app.domain.enums import TaskMode, TaskNodeStatus, TaskStatus
 from app.executors.base import ExecutorResult
 from app.infra.ssh_config import HostEntry
@@ -452,6 +455,51 @@ def test_execution_completed_audit_references_execution_result_id(db_session, mo
     assert execution_result_id is not None
     assert execution_audit.entity_type == "execution_result"
     assert execution_audit.entity_id == execution_result_id
+
+
+def test_approve_proposal_releases_write_lock_before_execution(db_session, monkeypatch) -> None:
+    service = OrchestratorService(db_session)
+    node = Node(
+        name="node-10b",
+        host_alias="node-10b",
+        hostname="127.0.0.1",
+        port=22,
+        username="root",
+        ssh_config_source="test",
+        tags=[],
+        capability_warnings=[],
+        is_enabled=True,
+    )
+    db_session.add(node)
+    db_session.commit()
+
+    task = service.create_task(
+        title="Approval commits before execution",
+        mode=TaskMode.AGENT_COMMAND,
+        user_input="Inspect safely",
+        node_ids=[node.id],
+        max_rounds_per_node=1,
+    )
+    service.approve_taskspec(task.id, edited_fields=None)
+    service.process_waiting_nodes()
+    proposal = service.list_pending_proposals()[0]
+    db_path = database.get_engine().url.database
+    assert db_path is not None
+
+    def _execute_with_concurrent_write(**_kwargs):
+        with sqlite3.connect(db_path, timeout=0.01) as conn:
+            conn.execute(
+                "INSERT INTO audit_logs (entity_type, entity_id, event_type, payload, operator_id) VALUES (?, ?, ?, ?, ?)",
+                ("proposal", proposal.id, "concurrent_probe", json.dumps({"ok": True}), "test"),
+            )
+            conn.commit()
+        return _fake_result()
+
+    monkeypatch.setattr(service.command_executor, "execute", _execute_with_concurrent_write)
+    approved = service.approve_proposal(proposal.id, edited_content=None, comment="ship it")
+
+    assert approved.status == "approved"
+    assert db_session.query(AuditLog).filter(AuditLog.event_type == "concurrent_probe").count() == 1
 
 
 def test_approve_taskspec_cannot_be_called_twice(db_session) -> None:

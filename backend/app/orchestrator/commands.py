@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select
@@ -43,6 +44,22 @@ def utcnow():  # type: ignore[no-untyped-def]
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc)
+
+
+@dataclass(frozen=True)
+class ExecutionNodeSnapshot:
+    host_alias: str
+    hostname: str
+    port: int
+    username: str | None
+
+
+@dataclass(frozen=True)
+class PreparedProposalExecution:
+    proposal_id: int
+    proposal_type: str
+    final_content: dict
+    node: ExecutionNodeSnapshot
 
 
 class CommandServiceBase:
@@ -318,7 +335,7 @@ class ProposalCommandService(CommandServiceBase):
         edited_content: dict | None,
         comment: str | None,
         approved_by: str,
-    ) -> None:
+    ) -> PreparedProposalExecution:
         task_node = proposal.round.task_node
         plan = plan_approve_proposal(
             proposal_status=proposal.status,
@@ -339,11 +356,31 @@ class ProposalCommandService(CommandServiceBase):
         task_node.status = plan.task_node_status.value
         self.audit.proposal_approved(proposal, decision=approval.decision, operator_id=approved_by)
 
-        if proposal.proposal_type == ProposalType.SHELL_COMMAND.value:
-            result = self.command_executor.execute(node=task_node.node, content=final_content)
-        else:
-            result = self.remote_executor.execute(node=task_node.node, content=final_content)
+        return PreparedProposalExecution(
+            proposal_id=proposal.id,
+            proposal_type=proposal.proposal_type,
+            final_content=final_content,
+            node=ExecutionNodeSnapshot(
+                host_alias=task_node.node.host_alias,
+                hostname=task_node.node.hostname,
+                port=task_node.node.port,
+                username=task_node.node.username,
+            ),
+        )
 
+    def execute_prepared_proposal(self, prepared: PreparedProposalExecution):
+        if prepared.proposal_type == ProposalType.SHELL_COMMAND.value:
+            return self.command_executor.execute(node=prepared.node, content=prepared.final_content)
+        return self.remote_executor.execute(node=prepared.node, content=prepared.final_content)
+
+    def finalize_proposal_execution(
+        self,
+        proposal: Proposal,
+        *,
+        result,
+        approved_by: str,
+    ) -> None:  # type: ignore[no-untyped-def]
+        task_node = proposal.round.task_node
         execution_result = ExecutionResult(
             proposal_id=proposal.id,
             executor_type=result.executor_type,

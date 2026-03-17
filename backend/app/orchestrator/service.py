@@ -216,10 +216,18 @@ class OrchestratorService:
         approved_by: str = "operator",
     ) -> Proposal:
         proposal = self.get_proposal(proposal_id)
-        self.proposal_commands.approve_proposal(
+        prepared = self.proposal_commands.approve_proposal(
             proposal,
             edited_content=edited_content,
             comment=comment,
+            approved_by=approved_by,
+        )
+        self.db.commit()
+        result = self.proposal_commands.execute_prepared_proposal(prepared)
+        proposal = self.get_proposal(proposal_id)
+        self.proposal_commands.finalize_proposal_execution(
+            proposal,
+            result=result,
             approved_by=approved_by,
         )
         self.db.commit()

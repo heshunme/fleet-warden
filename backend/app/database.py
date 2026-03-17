@@ -10,7 +10,7 @@ engine = None
 
 
 def _build_engine(database_url: str):
-    connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
+    connect_args = {"check_same_thread": False, "timeout": 30} if database_url.startswith("sqlite") else {}
     db_engine = create_engine(database_url, connect_args=connect_args, future=True)
 
     @event.listens_for(db_engine, "connect")
@@ -18,6 +18,7 @@ def _build_engine(database_url: str):
         if database_url.startswith("sqlite"):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA busy_timeout=30000;")
             cursor.execute("PRAGMA foreign_keys=ON;")
             cursor.close()
 
