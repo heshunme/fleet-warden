@@ -44,12 +44,12 @@ def test_task_lifecycle_command_mode(db_session, monkeypatch) -> None:
     db_session.commit()
 
     task = service.create_task(
-        title="Inspect node",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect the node safely",
         node_ids=[node.id],
         max_rounds_per_node=1,
     )
+    assert task.title == "Inspect the node safely"
     assert task.status == TaskStatus.AWAITING_TASKSPEC_APPROVAL.value
 
     task = service.approve_taskspec(task.id, edited_fields=None)
@@ -85,7 +85,6 @@ def test_recover_executing_node_blocks_tasknode(db_session) -> None:
     db_session.add(node)
     db_session.commit()
     task = service.create_task(
-        title="Recover task",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect",
         node_ids=[node.id],
@@ -121,7 +120,6 @@ def test_resume_task_preserves_existing_pending_proposal(db_session) -> None:
     db_session.commit()
 
     task = service.create_task(
-        title="Pause and resume task",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],
@@ -160,7 +158,6 @@ def test_resume_task_restores_pending_nodes_before_taskspec_approval(db_session)
     db_session.commit()
 
     task = service.create_task(
-        title="Pause before TaskSpec approval",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],
@@ -199,7 +196,6 @@ def test_pause_node_marks_proposal_non_pending(db_session) -> None:
     db_session.commit()
 
     task = service.create_task(
-        title="Pause node proposal",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],
@@ -234,7 +230,6 @@ def test_approve_proposal_persists_last_result_id(db_session, monkeypatch) -> No
     db_session.commit()
 
     task = service.create_task(
-        title="Persist execution result pointer",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],
@@ -270,7 +265,6 @@ def test_reject_taskspec_disallowed_after_approval(db_session) -> None:
     db_session.commit()
 
     task = service.create_task(
-        title="Reject should fail after approval",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],
@@ -358,7 +352,6 @@ def test_approve_proposal_rejects_non_pending_proposal(db_session, monkeypatch) 
     db_session.commit()
 
     task = service.create_task(
-        title="No duplicate proposal approvals",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],
@@ -405,7 +398,6 @@ def test_approve_proposal_requires_awaiting_approval_tasknode(db_session) -> Non
     db_session.commit()
 
     task = service.create_task(
-        title="Node state gate before approval",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],
@@ -436,7 +428,6 @@ def test_execution_completed_audit_references_execution_result_id(db_session, mo
     db_session.commit()
 
     task = service.create_task(
-        title="Audit execution id mapping",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],
@@ -474,7 +465,6 @@ def test_approve_proposal_releases_write_lock_before_execution(db_session, monke
     db_session.commit()
 
     task = service.create_task(
-        title="Approval commits before execution",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],
@@ -519,7 +509,6 @@ def test_approve_taskspec_cannot_be_called_twice(db_session) -> None:
     db_session.commit()
 
     task = service.create_task(
-        title="TaskSpec one-time approval",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],
@@ -548,7 +537,6 @@ def test_reject_proposal_rejects_non_pending_proposal(db_session, monkeypatch) -
     db_session.commit()
 
     task = service.create_task(
-        title="No reject after approval",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],
@@ -585,7 +573,6 @@ def test_pause_proposal_rejects_non_pending_proposal(db_session, monkeypatch) ->
     db_session.commit()
 
     task = service.create_task(
-        title="No pause after approval",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],
@@ -622,7 +609,6 @@ def test_create_task_deduplicates_node_ids(db_session) -> None:
     db_session.commit()
 
     task = service.create_task(
-        title="Deduplicate node ids",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id, node.id, node.id],
@@ -649,7 +635,6 @@ def test_approve_taskspec_rejects_cancelled_task(db_session) -> None:
     db_session.commit()
 
     task = service.create_task(
-        title="No approval after cancel",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],
@@ -677,7 +662,6 @@ def test_resume_task_rejects_non_paused_task(db_session) -> None:
     db_session.commit()
 
     task = service.create_task(
-        title="No resume when not paused",
         mode=TaskMode.AGENT_COMMAND,
         user_input="Inspect safely",
         node_ids=[node.id],

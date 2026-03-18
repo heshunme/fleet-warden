@@ -560,6 +560,26 @@ h3 {
   overflow: hidden;
 }
 
+.context-card {
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  align-content: start;
+  scrollbar-gutter: stable;
+}
+
+.context-card .clamp-4 {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+.context-card .mini-block p,
+.context-card .mini-list li {
+  overflow-wrap: anywhere;
+}
+
 .preview-lines {
   min-height: 0;
   max-height: 240px;

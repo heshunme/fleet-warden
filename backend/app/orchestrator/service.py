@@ -73,7 +73,6 @@ class OrchestratorService:
     def create_task(
         self,
         *,
-        title: str,
         mode: TaskMode,
         user_input: str,
         node_ids: list[int],
@@ -81,7 +80,6 @@ class OrchestratorService:
         max_rounds_per_node: int = 3,
     ) -> Task:
         task = self.task_commands.create_task(
-            title=title,
             mode=mode,
             user_input=user_input,
             node_ids=node_ids,

@@ -38,7 +38,6 @@ export function refreshNodes(): Promise<NodeRecord[]> {
 }
 
 export function createTask(payload: {
-  title: string;
   mode: TaskMode;
   user_input: string;
   node_ids: number[];

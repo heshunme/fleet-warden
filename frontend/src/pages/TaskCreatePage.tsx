@@ -13,7 +13,6 @@ interface TaskCreatePageProps {
 export function TaskCreatePage({ nodes, onNodesUpdated, onTaskCreated }: TaskCreatePageProps) {
   const [query, setQuery] = useState("");
   const [selectedNodeIds, setSelectedNodeIds] = useState<number[]>([]);
-  const [title, setTitle] = useState("FleetWarden V1 Task");
   const [mode, setMode] = useState<TaskMode>("agent_command");
   const [userInput, setUserInput] = useState("Inspect current node state and report back the next safe action.");
   const [submitting, setSubmitting] = useState(false);
@@ -41,7 +40,6 @@ export function TaskCreatePage({ nodes, onNodesUpdated, onTaskCreated }: TaskCre
     setSubmitting(true);
     try {
       const task = await createTask({
-        title,
         mode,
         user_input: userInput,
         node_ids: selectedNodeIds,
@@ -64,10 +62,6 @@ export function TaskCreatePage({ nodes, onNodesUpdated, onTaskCreated }: TaskCre
     >
       <div className="grid-two">
         <div className="stack">
-          <label>
-            <span>Title</span>
-            <input value={title} onChange={(event) => setTitle(event.target.value)} />
-          </label>
           <label>
             <span>Mode</span>
             <select value={mode} onChange={(event) => setMode(event.target.value as TaskMode)}>
@@ -112,4 +106,3 @@ export function TaskCreatePage({ nodes, onNodesUpdated, onTaskCreated }: TaskCre
     </SectionCard>
   );
 }
-

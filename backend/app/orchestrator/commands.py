@@ -81,7 +81,6 @@ class TaskCommandService(CommandServiceBase):
     def create_task(
         self,
         *,
-        title: str,
         mode: TaskMode,
         user_input: str,
         node_ids: list[int],
@@ -90,9 +89,10 @@ class TaskCommandService(CommandServiceBase):
     ) -> Task:
         unique_node_ids = list(dict.fromkeys(node_ids))
         self._ensure_nodes_exist(unique_node_ids)
+        derived_title = user_input.strip() or "Untitled task"
 
         task = Task(
-            title=title,
+            title=derived_title,
             mode=mode.value,
             user_input=user_input,
             status=TaskStatus.INITIALIZING.value,

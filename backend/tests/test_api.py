@@ -26,7 +26,6 @@ def test_create_task_api_flow() -> None:
         response = client.post(
             "/api/tasks",
             json={
-                "title": "API task",
                 "mode": "agent_command",
                 "user_input": "Inspect node",
                 "node_ids": [node_id],
@@ -36,6 +35,7 @@ def test_create_task_api_flow() -> None:
 
         assert response.status_code == 200
         payload = response.json()
+        assert payload["title"] == "Inspect node"
         assert payload["status"] == "awaiting_taskspec_approval"
         assert payload["task_nodes"][0]["node"]["host_alias"] == "api-node"
 
@@ -76,7 +76,6 @@ def test_reject_taskspec_after_approval_returns_409() -> None:
         create_response = client.post(
             "/api/tasks",
             json={
-                "title": "API reject conflict task",
                 "mode": "agent_command",
                 "user_input": "Inspect node",
                 "node_ids": [node_id],
@@ -97,7 +96,6 @@ def test_create_task_with_invalid_node_ids_returns_400() -> None:
         response = client.post(
             "/api/tasks",
             json={
-                "title": "Invalid node task",
                 "mode": "agent_command",
                 "user_input": "Inspect node",
                 "node_ids": [999999],
@@ -129,7 +127,6 @@ def test_approve_taskspec_twice_returns_409() -> None:
         create_response = client.post(
             "/api/tasks",
             json={
-                "title": "API taskspec double approve",
                 "mode": "agent_command",
                 "user_input": "Inspect node",
                 "node_ids": [node_id],
@@ -165,7 +162,6 @@ def test_create_task_with_duplicate_node_ids_is_deduplicated() -> None:
         response = client.post(
             "/api/tasks",
             json={
-                "title": "API duplicate node ids",
                 "mode": "agent_command",
                 "user_input": "Inspect node",
                 "node_ids": [node_id, node_id, node_id],
@@ -198,7 +194,6 @@ def test_approve_taskspec_after_cancel_returns_409() -> None:
         create_response = client.post(
             "/api/tasks",
             json={
-                "title": "API cancel then approve taskspec",
                 "mode": "agent_command",
                 "user_input": "Inspect node",
                 "node_ids": [node_id],
@@ -234,7 +229,6 @@ def test_resume_non_paused_task_returns_409() -> None:
         create_response = client.post(
             "/api/tasks",
             json={
-                "title": "API resume cancelled task",
                 "mode": "agent_command",
                 "user_input": "Inspect node",
                 "node_ids": [node_id],

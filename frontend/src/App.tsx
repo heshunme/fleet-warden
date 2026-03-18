@@ -99,7 +99,6 @@ function App() {
 
   const [nodeQuery, setNodeQuery] = useState("");
   const [selectedNodeIds, setSelectedNodeIds] = useState<number[]>([]);
-  const [title, setTitle] = useState("FleetWarden V1 Task");
   const [mode, setMode] = useState<TaskMode>("agent_command");
   const [userInput, setUserInput] = useState("Inspect current node state and report back the next safe action.");
   const [maxRoundsPerNode, setMaxRoundsPerNode] = useState(3);
@@ -384,7 +383,6 @@ function App() {
     setBusyAction("create-task");
     try {
       const task = await createTask({
-        title,
         mode,
         user_input: userInput,
         node_ids: selectedNodeIds,
@@ -610,11 +608,9 @@ function App() {
               onMaxRoundsChange={setMaxRoundsPerNode}
               onModeChange={setMode}
               onReturnToTask={() => setIsCreatingTask(false)}
-              onTitleChange={setTitle}
               onUserInputChange={setUserInput}
               selectedNodeIds={selectedNodeIds}
               selectedNodes={selectedNodes}
-              title={title}
               userInput={userInput}
             />
           ) : (

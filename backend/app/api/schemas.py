@@ -25,7 +25,6 @@ class NodeRead(BaseModel):
 
 
 class TaskCreateRequest(BaseModel):
-    title: str
     mode: TaskMode
     user_input: str
     node_ids: list[int] = Field(default_factory=list)

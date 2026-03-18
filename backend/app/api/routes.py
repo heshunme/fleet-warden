@@ -52,7 +52,6 @@ def create_task(request: TaskCreateRequest, service: OrchestratorService = Depen
     if not request.node_ids:
         raise HTTPException(status_code=400, detail="At least one node must be selected.")
     return service.create_task(
-        title=request.title,
         mode=request.mode,
         user_input=request.user_input,
         node_ids=request.node_ids,

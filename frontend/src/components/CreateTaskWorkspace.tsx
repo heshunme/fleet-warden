@@ -7,13 +7,11 @@ interface CreateTaskWorkspaceProps {
   mode: TaskMode;
   selectedNodeIds: number[];
   selectedNodes: NodeRecord[];
-  title: string;
   userInput: string;
   onCreateTask: () => void;
   onMaxRoundsChange: (value: number) => void;
   onModeChange: (value: TaskMode) => void;
   onReturnToTask: () => void;
-  onTitleChange: (value: string) => void;
   onUserInputChange: (value: string) => void;
 }
 
@@ -24,13 +22,11 @@ export function CreateTaskWorkspace({
   mode,
   selectedNodeIds,
   selectedNodes,
-  title,
   userInput,
   onCreateTask,
   onMaxRoundsChange,
   onModeChange,
   onReturnToTask,
-  onTitleChange,
   onUserInputChange,
 }: CreateTaskWorkspaceProps) {
   return (
@@ -43,17 +39,7 @@ export function CreateTaskWorkspace({
       </div>
 
       <div className="panel-body create-layout">
-        <div className="summary-card">
-          <span className="section-label">Task Setup</span>
-          <p>The console returns to the normal single-screen workflow immediately after task creation.</p>
-        </div>
-
         <div className="form-grid">
-          <label>
-            <span>Title</span>
-            <input value={title} onChange={(event) => onTitleChange(event.target.value)} />
-          </label>
-
           <label>
             <span>Mode</span>
             <select value={mode} onChange={(event) => onModeChange(event.target.value as TaskMode)}>
